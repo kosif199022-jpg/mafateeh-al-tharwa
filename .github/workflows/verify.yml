@@ -1,22 +1,23 @@
-name: Verify Mafateeh V13
+name: Verify Mafateeh Master
 
 on:
   push:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: verify-${{ github.ref }}
+  group: verify-master-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -30,19 +31,26 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Prepare V13 source
+      - name: Prepare scripts
+        run: chmod +x scripts/*.sh
+
+      - name: Master regression guard
         shell: bash
         run: |
-          chmod +x scripts/*.sh
-          sed -i '/reader-mixer\.css/d;/reader-smart-suite\.css/d;/reader-mixer\.js/d;/reader-smart-suite\.js/d' public/reader.html
-          rm -f public/reader-mixer.js public/reader-mixer.css public/reader-mixer-core-v22.js public/reader-smart-suite.js public/reader-smart-suite.css public/piper-worker.js
+          set -euo pipefail
+          test -x scripts/master-regression.sh || { echo '::error::master-regression.sh missing'; exit 2; }
+          scripts/master-regression.sh
 
-      - name: Validate V13 reader scripts
+      - name: Validate reader JavaScript
         run: |
           node --check public/reader-tools.js
           node --check public/reader-ambience.js
           node --check public/reader-studio.js
           node --check public/reader-formats.js
+          node --check public/reader-mixer.js
+          node --check public/reader-smart-suite.js
+          node --check public/reader-master-fixes.js
+          node --check public/piper-worker.js
 
       - name: Build and validate artifact
         run: npm run build
