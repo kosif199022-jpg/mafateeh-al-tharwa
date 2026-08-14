@@ -1,0 +1,5 @@
+Mafateeh V13 audiobook restored from the legacy project deployment.
+Source deployment: https://mafateeh-al-tharwa-app.elkosif0.chatgpt.site
+Files: chapter-01.mp3 through chapter-34.mp3
+Total bytes: 69464504
+Restored on 2026-08-15.
