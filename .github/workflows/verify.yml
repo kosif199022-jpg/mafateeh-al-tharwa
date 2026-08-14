@@ -30,6 +30,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Prepare shell scripts
+        run: chmod +x scripts/*.sh
+
       - name: Validate audio mixer syntax
         run: node --check public/reader-mixer.js
 
