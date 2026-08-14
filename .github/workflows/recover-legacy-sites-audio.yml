@@ -1,0 +1,78 @@
+name: Recover Mafateeh Audio from Legacy Sites
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/recover-legacy-sites-audio.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  recover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Probe legacy project deployments
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p public/audio
+          bases=(
+            'https://mafateeh-al-tharwa-app.elkosif0.chatgpt.site'
+            'https://mafateeh-al-tharwa.alaya-1591.chatgpt.site'
+          )
+
+          probe(){
+            local base="$1" h b c bytes code
+            h=$(mktemp); b=$(mktemp)
+            code=$(curl -L --max-time 30 -sS -w '%{http_code}' -D "$h" -o "$b" "$base/audio/chapter-01.mp3" || true)
+            c=$(awk 'BEGIN{IGNORECASE=1} /^content-type:/{gsub("\r",""); t=$2} END{print t}' "$h")
+            bytes=$(wc -c < "$b" | tr -d ' ')
+            echo "PROBE base=$base status=$code type=${c:-unknown} bytes=$bytes"
+            rm -f "$h" "$b"
+            if [ "$code" = 200 ] && { [[ "$c" == audio/* ]] || [[ "$c" == application/octet-stream* ]]; } && [ "$bytes" -gt 20000 ]; then return 0; fi
+            return 1
+          }
+
+          source=''
+          for base in "${bases[@]}"; do
+            if probe "$base"; then source="$base"; break; fi
+          done
+          [ -n "$source" ] || { echo '::error::No legacy Sites deployment exposes chapter audio'; exit 3; }
+          echo "FOUND SOURCE: $source"
+
+          total=0
+          for n in $(seq -w 1 34); do
+            out="public/audio/chapter-$n.mp3"
+            h=$(mktemp)
+            code=$(curl -L --retry 3 --retry-delay 2 --max-time 180 -sS -w '%{http_code}' -D "$h" -o "$out.tmp" "$source/audio/chapter-$n.mp3" || true)
+            c=$(awk 'BEGIN{IGNORECASE=1} /^content-type:/{gsub("\r",""); t=$2} END{print t}' "$h")
+            bytes=$(wc -c < "$out.tmp" | tr -d ' ')
+            rm -f "$h"
+            if [ "$code" != 200 ] || ! { [[ "$c" == audio/* ]] || [[ "$c" == application/octet-stream* ]]; } || [ "$bytes" -le 20000 ]; then
+              echo "::error::chapter-$n invalid status=$code type=${c:-unknown} bytes=$bytes"; exit 4
+            fi
+            mv "$out.tmp" "$out"
+            total=$((total+bytes))
+            echo "chapter-$n.mp3 $bytes bytes"
+          done
+          echo "Recovered total=$total bytes"
+          [ "$total" -gt 20000000 ] || { echo '::error::Recovered set too small'; exit 5; }
+          printf '%s\n' "$source" > public/audio/RECOVERED_FROM.txt
+
+      - name: Commit recovered audio
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add public/audio/chapter-*.mp3 public/audio/RECOVERED_FROM.txt
+          git commit -m 'Restore audiobook from legacy Mafateeh deployment'
+          git push origin HEAD:main
