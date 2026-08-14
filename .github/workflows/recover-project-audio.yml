@@ -1,0 +1,127 @@
+name: Recover Mafateeh Project Audio
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/recover-project-audio.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CLOUDFLARE_ACCOUNT_ID: 9ff3d8494afab356ecbf95a2a231a6b5
+  CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+
+jobs:
+  recover-audio:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify credentials
+        shell: bash
+        run: |
+          test -n "$CLOUDFLARE_API_TOKEN" || { echo '::error::CLOUDFLARE_API_TOKEN missing'; exit 2; }
+
+      - name: Discover prior Mafateeh Workers and recover audio
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p public/audio
+
+          # Stop immediately if the real chapter set is already present.
+          present=0
+          for n in $(seq -w 1 34); do
+            [ -s "public/audio/chapter-${n}.mp3" ] && present=$((present+1))
+          done
+          if [ "$present" -eq 34 ]; then
+            echo 'All 34 chapter MP3 files are already in the repository.'
+            exit 0
+          fi
+
+          api='https://api.cloudflare.com/client/v4'
+          auth=(-H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" -H 'Content-Type: application/json')
+
+          sub_json=$(curl -fsS "${auth[@]}" "$api/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/subdomain")
+          subdomain=$(node -e 'const x=JSON.parse(process.argv[1]); if(!x.success||!x.result?.subdomain) process.exit(2); process.stdout.write(x.result.subdomain)' "$sub_json")
+          echo "Cloudflare workers.dev subdomain: $subdomain"
+
+          scripts_json=$(curl -fsS "${auth[@]}" "$api/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts")
+          mapfile -t discovered < <(node -e 'const x=JSON.parse(process.argv[1]); for(const s of (x.result||[])){const id=s.id||s.name; if(id && /mafateeh/i.test(id)) console.log(id)}' "$scripts_json")
+          printf 'Mafateeh Workers found: %s\n' "${discovered[*]:-none}"
+
+          candidates=(mafateeh-al-tharwa3 mafateeh-al-tharwa2 mafateeh-al-tharwa)
+          for w in "${discovered[@]}"; do candidates+=("$w"); done
+
+          # Deduplicate candidates while preserving order.
+          mapfile -t candidates < <(printf '%s\n' "${candidates[@]}" | awk '!seen[$0]++')
+
+          source_base=''
+          for worker in "${candidates[@]}"; do
+            base="https://${worker}.${subdomain}.workers.dev"
+            echo "Checking $base"
+            hdr=$(mktemp)
+            body=$(mktemp)
+            if curl -fsSL -D "$hdr" -o "$body" "$base/audio/chapter-01.mp3"; then
+              ctype=$(awk 'BEGIN{IGNORECASE=1} /^content-type:/{gsub("\r",""); print $2; exit}' "$hdr")
+              bytes=$(wc -c < "$body" | tr -d ' ')
+              if { [[ "$ctype" == audio/* ]] || [[ "$ctype" == application/octet-stream* ]]; } && [ "$bytes" -gt 20000 ]; then
+                echo "Found real chapter audio at $base ($ctype, $bytes bytes for chapter 01)"
+                source_base="$base"
+                rm -f "$hdr" "$body"
+                break
+              fi
+              echo "Not usable: content-type=${ctype:-unknown}, bytes=$bytes"
+            fi
+            rm -f "$hdr" "$body"
+          done
+
+          if [ -z "$source_base" ]; then
+            echo '::error::No prior Mafateeh Worker currently exposes the original chapter MP3 files.'
+            exit 3
+          fi
+
+          total=0
+          for n in $(seq -w 1 34); do
+            url="$source_base/audio/chapter-${n}.mp3"
+            out="public/audio/chapter-${n}.mp3"
+            echo "Downloading chapter $n"
+            hdr=$(mktemp)
+            curl -fL --retry 3 --retry-delay 2 -D "$hdr" -o "$out.tmp" "$url"
+            ctype=$(awk 'BEGIN{IGNORECASE=1} /^content-type:/{gsub("\r",""); print $2; exit}' "$hdr")
+            bytes=$(wc -c < "$out.tmp" | tr -d ' ')
+            rm -f "$hdr"
+            if ! { [[ "$ctype" == audio/* ]] || [[ "$ctype" == application/octet-stream* ]]; } || [ "$bytes" -le 20000 ]; then
+              echo "::error::chapter-${n}.mp3 failed validation: type=${ctype:-unknown}, bytes=$bytes"
+              exit 4
+            fi
+            mv "$out.tmp" "$out"
+            total=$((total+bytes))
+          done
+
+          echo "Recovered 34 MP3 files, total bytes: $total"
+          if [ "$total" -lt 20000000 ]; then
+            echo '::error::Recovered audio set is unexpectedly small.'
+            exit 5
+          fi
+
+          printf '%s\n' "$source_base" > public/audio/RECOVERED_FROM.txt
+
+      - name: Commit recovered audio to the project
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git status --porcelain public/audio | grep -q .; then
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git add public/audio/chapter-*.mp3 public/audio/RECOVERED_FROM.txt
+            git commit -m 'Restore original 34-chapter audiobook files'
+            git push origin HEAD:main
+          else
+            echo 'No audio changes to commit.'
+          fi
