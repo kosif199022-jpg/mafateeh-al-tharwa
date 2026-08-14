@@ -1,4 +1,4 @@
-name: Deploy Mafateeh V13 to Cloudflare
+name: Deploy Mafateeh Master to Cloudflare
 
 on:
   push:
@@ -15,7 +15,7 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     env:
       CLOUDFLARE_ACCOUNT_ID: 9ff3d8494afab356ecbf95a2a231a6b5
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -32,27 +32,27 @@ jobs:
       - name: Verify Cloudflare credentials
         shell: bash
         run: |
-          if [ -z "$CLOUDFLARE_API_TOKEN" ]; then
-            echo "::error::GitHub secret CLOUDFLARE_API_TOKEN is not configured."
-            exit 2
-          fi
+          test -n "$CLOUDFLARE_API_TOKEN" || { echo '::error::GitHub secret CLOUDFLARE_API_TOKEN is not configured.'; exit 2; }
 
       - name: Install dependencies
         run: npm ci
 
-      - name: Prepare V13 source
-        shell: bash
-        run: |
-          chmod +x scripts/*.sh
-          sed -i '/reader-mixer\.css/d;/reader-smart-suite\.css/d;/reader-mixer\.js/d;/reader-smart-suite\.js/d' public/reader.html
-          rm -f public/reader-mixer.js public/reader-mixer.css public/reader-mixer-core-v22.js public/reader-smart-suite.js public/reader-smart-suite.css public/piper-worker.js
+      - name: Prepare scripts
+        run: chmod +x scripts/*.sh
 
-      - name: Validate V13 reader scripts
+      - name: Master regression guard
+        run: scripts/master-regression.sh
+
+      - name: Validate reader JavaScript
         run: |
           node --check public/reader-tools.js
           node --check public/reader-ambience.js
           node --check public/reader-studio.js
           node --check public/reader-formats.js
+          node --check public/reader-mixer.js
+          node --check public/reader-smart-suite.js
+          node --check public/reader-master-fixes.js
+          node --check public/piper-worker.js
 
       - name: Build Cloudflare Worker artifact
         run: npm run build
