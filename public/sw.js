@@ -1,21 +1,13 @@
-const CACHE_NAME = "mafateeh-al-tharwa-v24";
-const RUNTIME_CACHE = "mafateeh-runtime-v24";
-const PIPER_RUNTIME_CACHE = "mafateeh-piper-runtime-v22";
-const OFFLINE_FALLBACK = "/reader.html?v=24";
+const CACHE_NAME = "mafateeh-al-tharwa-v13";
 const OFFLINE_FILES = [
-  OFFLINE_FALLBACK,
+  "/reader.html?v=13",
   "/reader-tools.css?v=13",
   "/reader-ambience.css?v=13",
   "/reader-studio.css?v=13",
-  "/reader-mixer.css?v=24",
-  "/reader-smart-suite.css?v=24",
   "/reader-formats.js?v=13",
   "/reader-tools.js?v=13",
   "/reader-ambience.js?v=13",
   "/reader-studio.js?v=13",
-  "/reader-mixer.js?v=24",
-  "/reader-smart-suite.js?v=24",
-  "/piper-worker.js?v=24",
   "/backgrounds/ocean-dawn.webp",
   "/backgrounds/forest-mist.webp",
   "/backgrounds/desert-night.webp",
@@ -24,15 +16,6 @@ const OFFLINE_FILES = [
   "/icons/icon-512.png",
   "/icons/apple-touch-icon.png"
 ];
-const PERSISTENT_CACHE_PREFIXES = ["mafateeh-narrator-bank-", "mafateeh-smart-voice-", "mafateeh-piper-"];
-const EXTERNAL_RUNTIME_CACHE = "mafateeh-external-runtime-v24";
-const TRUSTED_PIPER_HOSTS = new Set([
-  "cdn.jsdelivr.net",
-  "huggingface.co",
-  "cdn-lfs.huggingface.co",
-  "cas-bridge.xethub.hf.co",
-  "cdn-lfs-us-1.hf.co"
-]);
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
@@ -45,45 +28,24 @@ self.addEventListener("install", (event) => {
 self.addEventListener("activate", (event) => {
   event.waitUntil(
     caches.keys()
-      .then((keys) => Promise.all(keys.filter((key) => {
-        if ([CACHE_NAME, RUNTIME_CACHE, PIPER_RUNTIME_CACHE, EXTERNAL_RUNTIME_CACHE].includes(key)) return false;
-        return !PERSISTENT_CACHE_PREFIXES.some((prefix) => key.startsWith(prefix));
-      }).map((key) => caches.delete(key))))
+      .then((keys) => Promise.all(keys.filter((key) => key !== CACHE_NAME).map((key) => caches.delete(key))))
       .then(() => self.clients.claim())
   );
 });
-
-async function cacheFirst(request, cacheName) {
-  const cache = await caches.open(cacheName);
-  const cached = await cache.match(request);
-  if (cached) return cached;
-  const response = await fetch(request);
-  if (response && (response.ok || response.type === "opaque")) {
-    try { await cache.put(request, response.clone()); } catch (_) {}
-  }
-  return response;
-}
 
 self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return;
 
   const requestURL = new URL(event.request.url);
-  if (requestURL.origin !== self.location.origin) {
-    if (requestURL.hostname === "unpkg.com") {
-      event.respondWith(cacheFirst(event.request, EXTERNAL_RUNTIME_CACHE));
-    } else if (TRUSTED_PIPER_HOSTS.has(requestURL.hostname)) {
-      event.respondWith(cacheFirst(event.request, PIPER_RUNTIME_CACHE));
-    }
-    return;
-  }
+  if (requestURL.origin !== self.location.origin) return;
 
   if (event.request.mode === "navigate") {
     event.respondWith(
       fetch(event.request).then((response) => {
         const copy = response.clone();
-        caches.open(RUNTIME_CACHE).then((cache) => cache.put(event.request, copy));
+        caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
         return response;
-      }).catch(() => caches.match(event.request).then((cached) => cached || caches.match(OFFLINE_FALLBACK)))
+      }).catch(() => caches.match(event.request).then((cached) => cached || caches.match("/reader.html?v=13")))
     );
     return;
   }
@@ -117,7 +79,7 @@ self.addEventListener("fetch", (event) => {
       fetch(event.request).then((response) => {
         if (!response || response.status !== 200) return response;
         const copy = response.clone();
-        caches.open(RUNTIME_CACHE).then((cache) => cache.put(event.request, copy));
+        caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
         return response;
       })
     )

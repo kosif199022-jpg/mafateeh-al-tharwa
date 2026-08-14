@@ -1,4 +1,4 @@
-name: Deploy Mafateeh to Cloudflare
+name: Deploy Mafateeh V13 to Cloudflare
 
 on:
   push:
@@ -40,11 +40,19 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Prepare shell scripts
-        run: chmod +x scripts/*.sh
+      - name: Prepare V13 source
+        shell: bash
+        run: |
+          chmod +x scripts/*.sh
+          sed -i '/reader-mixer\.css/d;/reader-smart-suite\.css/d;/reader-mixer\.js/d;/reader-smart-suite\.js/d' public/reader.html
+          rm -f public/reader-mixer.js public/reader-mixer.css public/reader-mixer-core-v22.js public/reader-smart-suite.js public/reader-smart-suite.css public/piper-worker.js
 
-      - name: Validate mixer syntax
-        run: node --check public/reader-mixer.js
+      - name: Validate V13 reader scripts
+        run: |
+          node --check public/reader-tools.js
+          node --check public/reader-ambience.js
+          node --check public/reader-studio.js
+          node --check public/reader-formats.js
 
       - name: Build Cloudflare Worker artifact
         run: npm run build

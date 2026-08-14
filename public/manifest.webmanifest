@@ -1,10 +1,10 @@
 {
   "name": "مفاتيح الثروة",
   "short_name": "مفاتيح الثروة",
-  "description": "مكتبة كتب عربية ذكية: قارئ صوتي متزامن، تحويل PDF، افهم كتابي، اقرأ أي نص، ومؤثرات صوتية متعددة.",
+  "description": "كتاب تفاعلي كامل مع قارئ صوتي والبحث والتمارين وحفظ التقدم.",
   "lang": "ar",
   "dir": "rtl",
-  "start_url": "/reader.html?v=22",
+  "start_url": "/reader.html?v=13",
   "scope": "/",
   "display": "standalone",
   "background_color": "#0A1324",

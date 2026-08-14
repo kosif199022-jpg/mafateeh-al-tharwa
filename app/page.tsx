@@ -20,5 +20,5 @@
 import { redirect } from "next/navigation";
 
 export default function Home() {
-  redirect("/reader.html?v=25");
+  redirect("/reader.html?v=13");
 }
