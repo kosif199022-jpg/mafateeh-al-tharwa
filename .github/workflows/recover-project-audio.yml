@@ -17,7 +17,7 @@ env:
 jobs:
   recover-audio:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
         with:
@@ -28,13 +28,12 @@ jobs:
         run: |
           test -n "$CLOUDFLARE_API_TOKEN" || { echo '::error::CLOUDFLARE_API_TOKEN missing'; exit 2; }
 
-      - name: Discover prior Mafateeh Workers and recover audio
+      - name: Discover current and historical Mafateeh deployments and recover audio
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p public/audio
 
-          # Stop immediately if the real chapter set is already present.
           present=0
           for n in $(seq -w 1 34); do
             [ -s "public/audio/chapter-${n}.mp3" ] && present=$((present+1))
@@ -57,32 +56,67 @@ jobs:
 
           candidates=(mafateeh-al-tharwa3 mafateeh-al-tharwa2 mafateeh-al-tharwa)
           for w in "${discovered[@]}"; do candidates+=("$w"); done
-
-          # Deduplicate candidates while preserving order.
           mapfile -t candidates < <(printf '%s\n' "${candidates[@]}" | awk '!seen[$0]++')
 
-          source_base=''
-          for worker in "${candidates[@]}"; do
-            base="https://${worker}.${subdomain}.workers.dev"
+          probe_audio() {
+            local base="$1" hdr body ctype bytes
             echo "Checking $base"
-            hdr=$(mktemp)
-            body=$(mktemp)
-            if curl -fsSL -D "$hdr" -o "$body" "$base/audio/chapter-01.mp3"; then
+            hdr=$(mktemp); body=$(mktemp)
+            if curl -fsSL --max-time 20 -D "$hdr" -o "$body" "$base/audio/chapter-01.mp3"; then
               ctype=$(awk 'BEGIN{IGNORECASE=1} /^content-type:/{gsub("\r",""); print $2; exit}' "$hdr")
               bytes=$(wc -c < "$body" | tr -d ' ')
               if { [[ "$ctype" == audio/* ]] || [[ "$ctype" == application/octet-stream* ]]; } && [ "$bytes" -gt 20000 ]; then
                 echo "Found real chapter audio at $base ($ctype, $bytes bytes for chapter 01)"
-                source_base="$base"
                 rm -f "$hdr" "$body"
-                break
+                return 0
               fi
               echo "Not usable: content-type=${ctype:-unknown}, bytes=$bytes"
             fi
             rm -f "$hdr" "$body"
+            return 1
+          }
+
+          source_base=''
+
+          # First inspect each Worker's currently active route.
+          for worker in "${candidates[@]}"; do
+            base="https://${worker}.${subdomain}.workers.dev"
+            if probe_audio "$base"; then source_base="$base"; break; fi
           done
 
+          # If the active routes no longer have the MP3s, inspect every historical
+          # Worker Version. Cloudflare versions preserve their static assets, and
+          # version preview URLs use the first 8 chars of the version UUID.
           if [ -z "$source_base" ]; then
-            echo '::error::No prior Mafateeh Worker currently exposes the original chapter MP3 files.'
+            echo 'Active routes have no chapter audio. Scanning historical Worker Versions...'
+            for worker in "${candidates[@]}"; do
+              versions_json=$(curl -fsS "${auth[@]}" "$api/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/$worker/versions?per_page=100" || true)
+              [ -n "$versions_json" ] || continue
+              mapfile -t versions < <(node -e '
+                try { const x=JSON.parse(process.argv[1]);
+                  for (const v of (x.result||[])) {
+                    if (v.id) console.log([v.id, v.number??"", v.metadata?.has_preview===false?"no":"yes", v.metadata?.created_on||""].join("|"));
+                  }
+                } catch (_) {}
+              ' "$versions_json")
+              echo "$worker historical versions: ${#versions[@]}"
+              for row in "${versions[@]}"; do
+                IFS='|' read -r vid vnum haspreview created <<< "$row"
+                echo "Version ${vnum:-?} $vid created ${created:-?} preview=$haspreview"
+                [ "$haspreview" = 'no' ] && continue
+                short="${vid:0:8}"
+                preview="https://${short}-${worker}.${subdomain}.workers.dev"
+                if probe_audio "$preview"; then
+                  source_base="$preview"
+                  echo "Historical source version: worker=$worker version=$vid"
+                  break 2
+                fi
+              done
+            done
+          fi
+
+          if [ -z "$source_base" ]; then
+            echo '::error::No current or historical Mafateeh Worker preview exposes the original chapter MP3 files.'
             exit 3
           fi
 
@@ -92,7 +126,7 @@ jobs:
             out="public/audio/chapter-${n}.mp3"
             echo "Downloading chapter $n"
             hdr=$(mktemp)
-            curl -fL --retry 3 --retry-delay 2 -D "$hdr" -o "$out.tmp" "$url"
+            curl -fL --retry 3 --retry-delay 2 --max-time 120 -D "$hdr" -o "$out.tmp" "$url"
             ctype=$(awk 'BEGIN{IGNORECASE=1} /^content-type:/{gsub("\r",""); print $2; exit}' "$hdr")
             bytes=$(wc -c < "$out.tmp" | tr -d ' ')
             rm -f "$hdr"
