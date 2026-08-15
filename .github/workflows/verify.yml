@@ -34,6 +34,9 @@ jobs:
       - name: Prepare scripts
         run: chmod +x scripts/*.sh
 
+      - name: Apply Master v32 reader fixes
+        run: node scripts/apply-v32-reader-fixes.mjs
+
       - name: Master regression guard
         shell: bash
         run: |
