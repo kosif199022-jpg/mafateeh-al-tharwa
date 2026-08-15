@@ -40,12 +40,17 @@ jobs:
       - name: Apply Master v33 iOS fixes
         run: node scripts/apply-v33-ios-fixes.mjs
 
+      - name: Apply modified 46-chapter book
+        run: node scripts/apply-modified-book.mjs
+
+      - name: Apply Master v34 permanent scroll fixes
+        run: node scripts/apply-v34-scroll-fixes.mjs
+
       - name: Master regression guard
-        shell: bash
-        run: |
-          set -euo pipefail
-          test -x scripts/master-regression.sh || { echo '::error::master-regression.sh missing'; exit 2; }
-          scripts/master-regression.sh
+        run: scripts/master-regression.sh
+
+      - name: v34 scroll regression checks
+        run: node tests/scroll-v34-regression.test.mjs
 
       - name: Validate reader JavaScript
         run: |
