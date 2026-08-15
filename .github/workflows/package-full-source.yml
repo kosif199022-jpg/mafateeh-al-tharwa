@@ -1,0 +1,51 @@
+name: Package Complete Mafateeh Source
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/package-full-source.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout complete source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Verify source package
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f public/reader.html
+          test -f public/reader-master-fixes.js
+          test -f public/reader-smart-suite.js
+          test -f public/reader-mixer.js
+          test -f public/piper-worker.js
+          test -f public/audio/manifest.json
+          test "$(find public/audio -maxdepth 1 -name 'chapter-*.mp3' | wc -l)" -eq 34
+
+      - name: Build source archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          zip -qr release/mafateeh-al-tharwa-complete-source.zip . \
+            -x '.git/*' 'release/*' 'node_modules/*' '.next/*' 'dist/*'
+          ls -lh release/mafateeh-al-tharwa-complete-source.zip
+
+      - name: Upload complete source
+        uses: actions/upload-artifact@v4
+        with:
+          name: mafateeh-al-tharwa-complete-source
+          path: release/mafateeh-al-tharwa-complete-source.zip
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
