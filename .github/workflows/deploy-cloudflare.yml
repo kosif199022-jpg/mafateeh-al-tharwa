@@ -71,7 +71,7 @@ jobs:
           live_version=""
 
           for attempt in 1 2 3 4 5 6 7 8; do
-            live_version="$(curl -fsS --retry 2 --retry-delay 1 -H 'Cache-Control: no-cache' "$LIVE_URL/master-version.json?cb=$cache_bust" 2>/dev/null || true)"
+            live_version="$(curl -LfsS --max-redirs 5 --retry 2 --retry-delay 1 -H 'Cache-Control: no-cache' "$LIVE_URL/master-version.json?cb=$cache_bust" 2>/dev/null || true)"
             if LIVE_VERSION="$live_version" EXPECTED_VERSION="$expected_version" node -e 'try { const live=JSON.parse(process.env.LIVE_VERSION || "{}"); process.exit(live.version === process.env.EXPECTED_VERSION ? 0 : 1); } catch { process.exit(1); }'; then
               break
             fi
@@ -80,13 +80,27 @@ jobs:
 
           LIVE_VERSION="$live_version" EXPECTED_VERSION="$expected_version" node -e 'const live=JSON.parse(process.env.LIVE_VERSION || "{}"); if (live.version !== process.env.EXPECTED_VERSION) { console.error(`Live version mismatch: expected ${process.env.EXPECTED_VERSION}, got ${live.version || "missing"}`); process.exit(1); } console.log(`Live version OK: ${live.version}`);'
 
-          curl -fsS --retry 3 -H 'Cache-Control: no-cache' "$LIVE_URL/reader.html?cb=$cache_bust" -o /tmp/mafateeh-reader.html
-          curl -fsS --retry 3 -H 'Cache-Control: no-cache' "$LIVE_URL/sw.js?cb=$cache_bust" -o /tmp/mafateeh-sw.js
-          curl -fsS --retry 3 -H 'Cache-Control: no-cache' "$LIVE_URL/manifest.webmanifest?cb=$cache_bust" -o /tmp/mafateeh-manifest.webmanifest
+          curl -LfsS --max-redirs 5 --retry 3 -H 'Cache-Control: no-cache' "$LIVE_URL/reader.html?cb=$cache_bust" -o /tmp/mafateeh-reader.html
+          curl -LfsS --max-redirs 5 --retry 3 -H 'Cache-Control: no-cache' "$LIVE_URL/sw.js?cb=$cache_bust" -o /tmp/mafateeh-sw.js
+          curl -LfsS --max-redirs 5 --retry 3 -H 'Cache-Control: no-cache' "$LIVE_URL/manifest.webmanifest?cb=$cache_bust" -o /tmp/mafateeh-manifest.webmanifest
 
-          grep -Fq "reader-master-fixes.js?v=$expected_major" /tmp/mafateeh-reader.html
-          grep -Fq "behavior:'instant'" /tmp/mafateeh-reader.html
-          grep -Fq "/reader-master-fixes.js?v=$expected_major" /tmp/mafateeh-sw.js
-          grep -Fq "\"start_url\": \"/reader.html?v=$expected_major\"" /tmp/mafateeh-manifest.webmanifest
+          EXPECTED_MAJOR="$expected_major" node <<'NODE'
+          const fs = require('fs');
+          const major = process.env.EXPECTED_MAJOR;
+          const checks = [
+            ['reader master fixes loaded', '/tmp/mafateeh-reader.html', `reader-master-fixes.js?v=${major}`],
+            ['instant auto-scroll enabled', '/tmp/mafateeh-reader.html', "behavior:'instant'"],
+            ['master fixes cached offline', '/tmp/mafateeh-sw.js', `/reader-master-fixes.js?v=${major}`],
+            ['PWA start URL versioned', '/tmp/mafateeh-manifest.webmanifest', `"start_url": "/reader.html?v=${major}"`],
+          ];
+          let failed = false;
+          for (const [label, file, needle] of checks) {
+            const content = fs.readFileSync(file, 'utf8');
+            const ok = content.includes(needle);
+            console.log(`${ok ? 'PASS' : 'FAIL'}: ${label}`);
+            if (!ok) failed = true;
+          }
+          if (failed) process.exit(1);
+          NODE
 
           echo "Live smoke test passed for $LIVE_URL (v$expected_version)."
