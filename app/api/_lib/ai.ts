@@ -21,9 +21,13 @@ export function sameOrigin(request: Request) {
   const fetchSite = request.headers.get("sec-fetch-site");
   if (fetchSite && !["same-origin", "same-site", "none"].includes(fetchSite)) return false;
   const origin = request.headers.get("origin");
-  if (!origin) return true;
+  const referer = request.headers.get("referer");
+  if (!origin && !referer) return false;
   try {
-    return new URL(origin).origin === new URL(request.url).origin;
+    const expected = new URL(request.url).origin;
+    if (origin && new URL(origin).origin !== expected) return false;
+    if (!origin && referer && new URL(referer).origin !== expected) return false;
+    return true;
   } catch {
     return false;
   }

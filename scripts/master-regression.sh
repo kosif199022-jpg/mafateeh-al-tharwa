@@ -4,7 +4,7 @@ fail(){ echo "::error::$*"; exit 1; }
 required=(
   public/reader.html public/reader-tools.js public/reader-ambience.js public/reader-studio.js public/reader-formats.js
   public/reader-mixer.js public/reader-mixer.css public/reader-smart-suite.js public/reader-smart-suite.css
-  public/reader-master-fixes.js public/piper-worker.js public/sw.js public/audio/manifest.json
+  public/reader-master-fixes.js public/piper-worker.js public/sw.js public/audio/manifest.json tests/scroll-regressions.test.mjs
   app/api/tts/route.ts app/api/_lib/ai.ts app/api/ai/chat/route.ts app/api/ai/pdf/route.ts app/api/ai/status/route.ts app/api/ai/tts/route.ts
 )
 for f in "${required[@]}"; do [ -s "$f" ] || fail "Missing required Master feature: $f"; done
@@ -20,8 +20,8 @@ node - <<'NODE'
 const fs=require('fs');const m=JSON.parse(fs.readFileSync('public/audio/manifest.json','utf8'));
 if(!Array.isArray(m.chapters)||m.chapters.length!==34)throw new Error(`manifest chapters=${m.chapters?.length}`);
 NODE
-grep -q 'reader-mixer.js?v=30' public/reader.html || fail 'reader.html does not load Mixer Master'
-grep -q 'reader-smart-suite.js?v=30' public/reader.html || fail 'reader.html does not load Smart Suite Master'
-grep -q 'reader-master-fixes.js' public/reader-smart-suite.js || fail 'Master runtime fix loader missing'
+grep -q 'reader-mixer.js?v=31' public/reader.html || fail 'reader.html does not load Mixer Master'
+grep -q 'reader-smart-suite.js?v=31' public/reader.html || fail 'reader.html does not load Smart Suite Master'
+grep -q 'reader-master-fixes.js?v=31' public/reader.html || fail 'Master runtime fix direct loader missing'
 if grep -q 'rm -f public/reader-mixer' .github/workflows/deploy-cloudflare.yml; then fail 'Deployment workflow still strips advanced features'; fi
 echo "Master regression guard passed: 34 MP3s, $bytes bytes, advanced reader, AI, Piper and offline runtime present."

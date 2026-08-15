@@ -50,7 +50,7 @@ one('.drawer-actions')?.insertAdjacentHTML('beforeend','<button id="drawerSmartL
 one('#prefs')?.insertAdjacentHTML('beforeend','<div class="prow" style="margin-bottom:0"><button id="prefsSmartLibrary" style="width:100%;border:1px solid var(--line);background:var(--bg2);border-radius:11px;padding:11px;font-weight:800;color:var(--ink)">✦ اقرأ أي نص ومكتبة PDF الذكية</button></div>');
 
 const hub=one('#smartHubShade'), bookShade=one('#smartBookShade');
-let smartScrollY=0;function bodyLock(on){if(on&&!document.body.classList.contains('smart-modal-open')){smartScrollY=window.scrollY||document.documentElement.scrollTop||0;document.body.style.top=`-${smartScrollY}px`;document.body.classList.add('smart-modal-open')}else if(!on&&document.body.classList.contains('smart-modal-open')){document.body.classList.remove('smart-modal-open');document.body.style.top='';window.scrollTo(0,smartScrollY)}}
+function bodyLock(on){document.body.classList.toggle('smart-modal-open',!!on);if(on){try{autoScrollPause(true)}catch(_){}}requestAnimationFrame(()=>window.MafateehMaster?.syncOverlay?.())}
 function openHub(tab='read'){hub.classList.add('on');hub.setAttribute('aria-hidden','false');bodyLock(true);setTab(tab);try{autoScrollPause?.(true)}catch(_){}try{closeDrawer?.()}catch(_){}refreshAll();}
 function closeHub(){hub.classList.remove('on');hub.setAttribute('aria-hidden','true');if(!bookShade.classList.contains('on'))bodyLock(false)}
 function setTab(tab){many('[data-smart-tab]').forEach(b=>b.classList.toggle('on',b.dataset.smartTab===tab));many('[data-smart-pane]').forEach(p=>p.classList.toggle('on',p.dataset.smartPane===tab));if(tab==='library')renderBooks();if(tab==='bookai')refreshBookAI();if(tab==='offline')refreshOffline();}
@@ -58,7 +58,7 @@ one('#smartHubDock').onclick=()=>openHub('library');one('#drawerSmartLibrary')?.
 
 /* ───────── Piper Worker ───────── */
 let piperWorker, piperSeq=0;const piperPending=new Map();
-function ensurePiper(){if(piperWorker)return piperWorker;piperWorker=new Worker('/piper-worker.js?v=24',{type:'module'});piperWorker.onmessage=e=>{const m=e.data||{},p=piperPending.get(m.id);if(!p)return;if(m.progress){p.progress?.(m);return}piperPending.delete(m.id);m.ok?p.resolve(m):p.reject(new Error(m.error||'piper_failed'))};piperWorker.onerror=()=>{for(const p of piperPending.values())p.reject(new Error('تعذر تحميل Piper. اتصل بالإنترنت مرة واحدة لتجهيز المحرك.'));piperPending.clear()};return piperWorker;}
+function ensurePiper(){if(piperWorker)return piperWorker;piperWorker=new Worker('/piper-worker.js?v=31',{type:'module'});piperWorker.onmessage=e=>{const m=e.data||{},p=piperPending.get(m.id);if(!p)return;if(m.progress){p.progress?.(m);return}piperPending.delete(m.id);m.ok?p.resolve(m):p.reject(new Error(m.error||'piper_failed'))};piperWorker.onerror=()=>{for(const p of piperPending.values())p.reject(new Error('تعذر تحميل Piper. اتصل بالإنترنت مرة واحدة لتجهيز المحرك.'));piperPending.clear()};return piperWorker;}
 function piperCall(action,data={},progress){return new Promise((resolve,reject)=>{const id=`p${++piperSeq}`;piperPending.set(id,{resolve,reject,progress});ensurePiper().postMessage({id,action,...data})})}
 async function preparePiper(statusEl=one('#smartPiperStatus')){statusEl.textContent='يتم تنزيل/فحص Piper ونموذج Arabic Kareem…';try{const r=await piperCall('prepare',{},m=>{statusEl.textContent=`تنزيل Piper: ${m.percent||0}%${m.url?' · '+m.url.split('/').pop():''}`});statusEl.textContent=r.stored?.includes('ar_JO-kareem-medium')?'Piper جاهز للعمل بدون إنترنت ✓':'تم تجهيز Piper.';return true}catch(e){statusEl.textContent=`تعذر تجهيز Piper: ${e.message}`;statusEl.classList.add('error');return false}}
 async function piperBlob(text){const key=`piper:${hash(text)}`;const cached=await get('audio',key).catch(()=>null);if(cached?.blob)return cached.blob;const r=await piperCall('speak',{text});const blob=r.blob instanceof Blob?r.blob:new Blob([r.blob],{type:'audio/wav'});await put('audio',{id:key,blob,provider:'piper',createdAt:Date.now(),textHash:hash(text)});return blob;}
@@ -89,7 +89,7 @@ window.MafateehSmartReader={read:readAnyText,stop:stopRead,planBookVoice,prepare
 
 /* ───────── Smart PDF Library v24 — no fixed book-size/page cap ───────── */
 let activeBookId=null, readerChapter=0, importCancel=false, generateCancel=false,voiceBankCancel=false;
-const IMPORT_BATCH=20, PDF_PART_TARGET_PAGES=180, PDF_PART_MAX_BYTES=44*1024*1024, MAX_READER_UNIT_PAGES=80, IMPORT_STAGES=['upload','analyze','extract','format','intelligence','audio','offline'];
+const IMPORT_BATCH=20, PDF_PART_TARGET_PAGES=80, PDF_PART_MAX_BYTES=12*1024*1024, MAX_READER_UNIT_PAGES=80, IMPORT_STAGES=['upload','analyze','extract','format','intelligence','audio','offline'];
 let pdfLibPromise=null;
 async function ensurePdfLib(){
   if(window.PDFLib?.PDFDocument)return window.PDFLib;
@@ -169,4 +169,3 @@ try{if('mediaSession'in navigator){narrator.addEventListener('playing',()=>{navi
 window.MafateehSmartLibrary={open:openHub,openBook,refresh:refreshAll,addBook:()=>openHub('library'),resume:resumeBook};
 refreshAll();
 })();
-;(()=>{if(!document.querySelector('script[data-mafateeh-master-fixes]')){const s=document.createElement('script');s.src='/reader-master-fixes.js?v=30';s.defer=true;s.dataset.mafateehMasterFixes='30';document.head.appendChild(s)}})();

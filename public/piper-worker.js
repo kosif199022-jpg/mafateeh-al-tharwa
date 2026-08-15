@@ -1,10 +1,11 @@
 /* مفاتيح الثروة — Piper Worker
    Piper يعمل محليًا في المتصفح بعد تنزيل نموذج ar_JO-kareem-medium.
    النص لا يُرسل إلى خادم التطبيق أو مزود سحابي في هذا الوضع. */
-const MODULE_URL = 'https://cdn.jsdelivr.net/npm/@mintplex-labs/piper-tts-web@1.0.5/+esm';
+const MODULE_URLS = ['https://cdn.jsdelivr.net/npm/@mintplex-labs/piper-tts-web@1.0.5/+esm','https://esm.sh/@mintplex-labs/piper-tts-web@1.0.5?bundle'];
 const DEFAULT_VOICE = 'ar_JO-kareem-medium';
 let ttsPromise;
-const load = () => ttsPromise || (ttsPromise = import(MODULE_URL));
+async function loadModule(){let last;for(const url of MODULE_URLS){try{return await import(url)}catch(e){last=e}}throw new Error('piper_runtime_load_failed: '+(last?.message||'all_cdn_sources_failed'))}
+const load = () => ttsPromise || (ttsPromise = loadModule().catch(e=>{ttsPromise=null;throw e}));
 const answer = (id, ok, data = {}) => postMessage({ id, ok, ...data });
 
 self.onmessage = async (event) => {

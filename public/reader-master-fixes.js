@@ -3,7 +3,7 @@
    full-audiobook offline download, visual viewport, and regression telemetry. */
 (function(){
 'use strict';
-const VERSION='30.0.0';
+const VERSION='31.0.0';
 const $=(s,r=document)=>r.querySelector(s);
 const $$=(s,r=document)=>[...r.querySelectorAll(s)];
 const pad=n=>String(n).padStart(2,'0');
@@ -30,6 +30,14 @@ body.mk-overlay-open{overflow:hidden!important;touch-action:none!important;width
 #mkMasterOfflineCard button.primary{background:var(--navy,#1f3352);color:white}
 #mkMasterOfflineCard progress{width:100%;height:8px;margin-top:12px;accent-color:var(--gold,#b4894a)}
 #mkMasterHealth{font-size:.86rem;margin-top:8px;min-height:1.6em}
+html.mk-hide-smart #smartHubDock{display:none!important}
+html.mk-hide-mixer #mixerDock{display:none!important}
+html.mk-hide-scroll #scrollDock{display:none!important}
+html[data-theme=ocean]{--bg:#eef7fb;--bg2:#e2f0f6;--surf:#fff;--ink:#123047;--ink2:#49697b;--line:#c8dfe8;--gold:#8a6532;--navy:#123047;--hl:rgba(72,145,174,.23)}
+html[data-theme=forest]{--bg:#f0f5ef;--bg2:#e4eee2;--surf:#fbfdf9;--ink:#203829;--ink2:#58705e;--line:#ccd9ca;--gold:#87652f;--navy:#203829;--hl:rgba(91,135,91,.22)}
+html[data-theme=sand]{--bg:#fbf3df;--bg2:#f2e6c8;--surf:#fffaf0;--ink:#4a3722;--ink2:#715c43;--line:#dfcfaa;--gold:#8a5d24;--navy:#4a3722;--hl:rgba(178,120,42,.2)}
+html[data-theme=midnight]{--bg:#00152c;--bg2:#0d2138;--surf:#112a46;--ink:#f7f3e9;--ink2:#bbc6d4;--line:#29425d;--gold:#f6cc85;--navy:#00152c;--hl:rgba(246,204,133,.25)}
+html[data-theme=contrast]{--bg:#fff;--bg2:#f5f5f5;--surf:#fff;--ink:#000;--ink2:#2a2a2a;--line:#777;--gold:#6d4b12;--navy:#000;--hl:#ffe06a}
 `;
 document.head.appendChild(style);
 
@@ -51,6 +59,7 @@ let locked=false,lockY=0,savedBody=null,syncRAF=0;
 function visible(el){if(!el)return false;const s=getComputedStyle(el);return s.display!=='none'&&s.visibility!=='hidden'&&s.pointerEvents!=='none'}
 function hasOverlay(){return overlaySelectors.some(sel=>{try{return $$(sel).some(visible)}catch{return false}})}
 function lockBody(){
+  try{if(typeof autoScrollPause==='function')autoScrollPause(true)}catch(_){}
   if(locked)return;locked=true;lockY=scrollY||document.documentElement.scrollTop||0;
   const b=document.body;savedBody={position:b.style.position,top:b.style.top,left:b.style.left,right:b.style.right,width:b.style.width,overflow:b.style.overflow,touchAction:b.style.touchAction};
   b.style.position='fixed';b.style.top=`-${lockY}px`;b.style.left='0';b.style.right='0';b.style.width='100%';b.style.overflow='hidden';b.style.touchAction='none';
@@ -59,18 +68,25 @@ function lockBody(){
 function unlockBody(){
   if(!locked)return;locked=false;const b=document.body;
   if(savedBody){Object.assign(b.style,savedBody);savedBody=null}else{b.style.position='';b.style.top='';b.style.left='';b.style.right='';b.style.width='';b.style.overflow='';b.style.touchAction=''}
-  b.classList.remove('mk-overlay-open');document.documentElement.classList.remove('mk-overlay-open');scrollTo(0,lockY);
+  b.classList.remove('mk-overlay-open');document.documentElement.classList.remove('mk-overlay-open');requestAnimationFrame(()=>scrollTo({top:lockY,behavior:'instant'}));
 }
 function syncOverlay(){syncRAF=0;hasOverlay()?lockBody():unlockBody();$$(scrollSelectors).forEach(el=>{el.style.webkitOverflowScrolling='touch';el.style.overscrollBehavior='contain';if(getComputedStyle(el).overflowY==='visible')el.style.overflowY='auto'})}
 function scheduleOverlay(){if(!syncRAF)syncRAF=requestAnimationFrame(syncOverlay)}
 new MutationObserver(scheduleOverlay).observe(document.body,{subtree:true,attributes:true,attributeFilter:['class','style','aria-hidden']});
 addEventListener('pageshow',scheduleOverlay);scheduleOverlay();
 
-// Stop touch-chain from moving the book behind an open modal while keeping the sheet scrollable.
+// Stop touch-chain from moving the book behind an open modal while keeping the nearest nested scroll container usable.
+function scrollableAncestor(el){
+  for(let node=el;node&&node!==document.body;node=node.parentElement){
+    const st=getComputedStyle(node),oy=st.overflowY;
+    if(/(auto|scroll)/.test(oy)&&node.scrollHeight>node.clientHeight+1)return node;
+  }
+  return null;
+}
 let touchY=0;
 document.addEventListener('touchstart',e=>{touchY=e.touches?.[0]?.clientY||0},{passive:true,capture:true});
 document.addEventListener('touchmove',e=>{
-  if(!locked)return;const sc=e.target.closest?.(scrollSelectors);if(!sc){e.preventDefault();return}
+  if(!locked)return;const sc=scrollableAncestor(e.target);if(!sc){e.preventDefault();return}
   const y=e.touches?.[0]?.clientY||touchY,dy=y-touchY;touchY=y;
   const atTop=sc.scrollTop<=0,atBottom=Math.ceil(sc.scrollTop+sc.clientHeight)>=sc.scrollHeight;
   if((atTop&&dy>0)||(atBottom&&dy<0))e.preventDefault();
@@ -98,7 +114,7 @@ setupAudio();new MutationObserver(setupAudio).observe(document.body,{childList:t
 const unlockAudio=()=>{try{const c=window.MafateehMixer?.context||window.MafateehMixer?.state?.context;if(c?.state==='suspended')c.resume().catch(()=>{})}catch(_){}};
 document.addEventListener('pointerdown',unlockAudio,{passive:true,capture:true});document.addEventListener('touchend',unlockAudio,{passive:true,capture:true});
 
-const AUDIO_CACHE='mafateeh-audiobook-master-v30';
+const AUDIO_CACHE='mafateeh-audiobook-master-v31';
 const chapterURLs=()=>Array.from({length:34},(_,i)=>`/audio/chapter-${pad(i+1)}.mp3`);
 const timingURLs=()=>Array.from({length:34},(_,i)=>`/audio/timings/chapter-${pad(i+1)}.json`);
 let offlineProgress=0;
@@ -113,7 +129,7 @@ async function cacheAudiobook(){
 async function clearAudiobook(){await caches.delete(AUDIO_CACHE);setOfflineStatus('تم حذف حزمة الكتاب الصوتي Offline',0)}
 async function probe(url){try{const r=await fetch(url,{method:'HEAD',cache:'no-store'});return {url,ok:r.ok,status:r.status,type:r.headers.get('content-type')||''}}catch(e){return {url,ok:false,status:0,error:e.message}}}
 async function health(){
-  const modules=['/reader-mixer.js?v=30','/reader-smart-suite.js?v=30','/reader-tools.js?v=30','/reader-studio.js?v=30','/piper-worker.js?v=30'];
+  const modules=['/reader-mixer.js?v=31','/reader-smart-suite.js?v=31','/reader-tools.js?v=31','/reader-studio.js?v=31','/piper-worker.js?v=31'];
   const urls=[...chapterURLs(),'/audio/manifest.json',...modules];let out=[];
   for(let i=0;i<urls.length;i+=6)out.push(...await Promise.all(urls.slice(i,i+6).map(probe)));
   const bad=out.filter(x=>!x.ok);return {version:VERSION,checked:out.length,ok:bad.length===0,bad,results:out};
@@ -129,11 +145,30 @@ function injectOfflineCard(){
 }
 if(!injectOfflineCard()){const mo=new MutationObserver(()=>{if(injectOfflineCard())mo.disconnect()});mo.observe(document.body,{subtree:true,childList:true})}
 
+// Reader surface controls: dock visibility + additional themes.
+const UI_PREF_KEY='mafateehMasterUiV31';
+function readUiPrefs(){try{return {...{smart:true,mixer:true,scroll:true,theme:''},...JSON.parse(localStorage.getItem(UI_PREF_KEY)||'{}')}}catch(_){return {smart:true,mixer:true,scroll:true,theme:''}}}
+let uiPrefs=readUiPrefs();
+function applyUiPrefs(){
+  const root=document.documentElement;root.classList.toggle('mk-hide-smart',uiPrefs.smart===false);root.classList.toggle('mk-hide-mixer',uiPrefs.mixer===false);root.classList.toggle('mk-hide-scroll',uiPrefs.scroll===false);
+  if(uiPrefs.theme)root.dataset.theme=uiPrefs.theme;
+  try{localStorage.setItem(UI_PREF_KEY,JSON.stringify(uiPrefs))}catch(_){}
+}
+function injectMasterPrefs(){
+  const prefs=$('#prefs');if(!prefs||$('#mkMasterUiPrefs'))return false;
+  const wrap=document.createElement('section');wrap.id='mkMasterUiPrefs';wrap.style.cssText='margin:14px 0;padding:13px;border:1px solid var(--line);border-radius:14px;background:var(--bg2)';
+  wrap.innerHTML=`<h3 style="margin:0 0 8px;font-size:.9rem">واجهة القراءة</h3><div style="display:grid;gap:8px;font-size:.8rem"><label><input id="mkShowSmart" type="checkbox"> إظهار أيقونة المكتبة الذكية</label><label><input id="mkShowMixer" type="checkbox"> إظهار أيقونة Mix Pro</label><label><input id="mkShowScroll" type="checkbox"> إظهار شريط التمرير التلقائي</label><label>ثيم إضافي <select id="mkExtraTheme" style="width:100%;margin-top:5px;padding:8px;border:1px solid var(--line);border-radius:10px;background:var(--bg);color:var(--ink)"><option value="">استخدم الثيم الحالي</option><option value="ocean">أزرق هادئ</option><option value="forest">أخضر قارئ</option><option value="sand">ورقي رملي</option><option value="midnight">كحلي الهوية</option><option value="contrast">تباين عالٍ</option></select></label></div>`;
+  prefs.appendChild(wrap);
+  $('#mkShowSmart').checked=uiPrefs.smart!==false;$('#mkShowMixer').checked=uiPrefs.mixer!==false;$('#mkShowScroll').checked=uiPrefs.scroll!==false;$('#mkExtraTheme').value=uiPrefs.theme||'';
+  $('#mkShowSmart').onchange=e=>{uiPrefs.smart=e.target.checked;applyUiPrefs()};$('#mkShowMixer').onchange=e=>{uiPrefs.mixer=e.target.checked;applyUiPrefs()};$('#mkShowScroll').onchange=e=>{uiPrefs.scroll=e.target.checked;applyUiPrefs()};$('#mkExtraTheme').onchange=e=>{uiPrefs.theme=e.target.value;applyUiPrefs()};return true;
+}
+applyUiPrefs();if(!injectMasterPrefs()){const pm=new MutationObserver(()=>{if(injectMasterPrefs())pm.disconnect()});pm.observe(document.body,{subtree:true,childList:true})}
+
 // Keep a tiny local error ledger for reproducible iPhone reports without sending user data anywhere.
 function logError(kind,message){try{const key='mafateehMasterErrors',list=JSON.parse(localStorage.getItem(key)||'[]');list.push({time:new Date().toISOString(),kind,message:String(message||'').slice(0,500)});localStorage.setItem(key,JSON.stringify(list.slice(-20)))}catch(_){} }
 addEventListener('error',e=>logError('error',e.message));addEventListener('unhandledrejection',e=>logError('promise',e.reason?.message||e.reason));
 
-// Service worker must immediately move clients from old V13/V24 caches to Master v30.
+// Service worker must immediately move clients from old V13/V24/V30 caches to Master v31.
 if('serviceWorker'in navigator)addEventListener('load',()=>navigator.serviceWorker.register('/sw.js').then(r=>r.update()).catch(()=>{}));
 
 window.MafateehMaster={version:VERSION,health,runHealth,cacheAudiobook,clearAudiobook,cacheName:AUDIO_CACHE,syncOverlay};

@@ -2,7 +2,7 @@ import { cleanText, deleteGeminiFile, geminiFromFile, json, rateLimit, sameOrigi
 
 // This is a per-upload-part safety ceiling, not a book-size ceiling.
 // V24 splits books in the browser and can process any number of parts sequentially.
-const MAX_PDF_PART_BYTES = 48 * 1024 * 1024;
+const MAX_PDF_PART_BYTES = 12 * 1024 * 1024;
 function parseJson(text: string) {
   try { return JSON.parse(text); } catch {
     const match = text.match(/\{[\s\S]*\}/); if (match) return JSON.parse(match[0]); throw new Error("invalid_model_json");

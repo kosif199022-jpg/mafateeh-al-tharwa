@@ -1,21 +1,27 @@
 <!DOCTYPE html>
-<html lang="ar" dir="rtl" data-theme="light" data-platform="ios">
+<html lang="ar" dir="rtl" data-theme="light" data-platform="other">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<script>
+(()=>{const n=navigator,p=n.platform||"",ua=n.userAgent||"";document.documentElement.dataset.platform=(/iPad|iPhone|iPod/.test(p)||(/Mac/.test(p)&&n.maxTouchPoints>1)||/iPad|iPhone|iPod/.test(ua))?"ios":"other"})();
+</script>
 <meta name="theme-color" content="#1F3352">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="format-detection" content="telephone=no">
 <link rel="manifest" href="/manifest.webmanifest">
+<script>
+if("serviceWorker" in navigator&&(location.protocol==="https:"||location.hostname==="localhost")){navigator.serviceWorker.register("/sw.js").then(r=>r.update()).catch(()=>{});}
+</script>
 <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
 <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png">
-<link rel="stylesheet" href="/reader-tools.css?v=30">
-<link rel="stylesheet" href="/reader-ambience.css?v=30">
-<link rel="stylesheet" href="/reader-mixer.css?v=30">
-<link rel="stylesheet" href="/reader-smart-suite.css?v=30">
-<link rel="stylesheet" href="/reader-studio.css?v=30">
+<link rel="stylesheet" href="/reader-tools.css?v=31">
+<link rel="stylesheet" href="/reader-ambience.css?v=31">
+<link rel="stylesheet" href="/reader-mixer.css?v=31">
+<link rel="stylesheet" href="/reader-smart-suite.css?v=31">
+<link rel="stylesheet" href="/reader-studio.css?v=31">
 <title>مفاتيح الثروة — الكتاب الكامل</title>
 <style>
 /* ══════════ رموز التصميم ══════════ */
@@ -23,7 +29,7 @@
   --gold:#B4894A; --goldL:#D6B274; --navy:#1F3352; --deep:#0C162C;
   --sans:-apple-system,BlinkMacSystemFont,'SF Arabic','Geeza Pro',system-ui,sans-serif;
   --serif:'Geeza Pro','SF Arabic',Georgia,'Times New Roman',serif;
-  --read:var(--serif); --fs:22px; --lh:2.05; --measure:46rem; --align:justify;
+  --read:var(--serif); --fs:22px; --lh:2.05; --measure:calc(var(--fs) * 32); --align:justify;
   --rad:16px; --dur:.42s; --ease:cubic-bezier(.2,.8,.3,1);
   --bg:#fff; --bg2:#F7F5F0; --surf:#fff; --ink:#16233B; --ink2:#4A5768;
   --line:#E3E7EE; --shadow:0 22px 50px -26px rgba(31,51,82,.42);
@@ -172,7 +178,7 @@ html[data-platform=ios] #search{padding-block-end:calc(16px + env(safe-area-inse
 .keybox .mk{position:absolute;inset-block-start:-30px;inset-inline-start:-34px;width:150px;opacity:.13}
 .keybox b{display:block;font-size:.86rem;color:var(--gold);margin-bottom:7px;position:relative}
 .keybox p{font-family:var(--serif);font-size:1.24rem;color:var(--ink);position:relative;line-height:1.9}
-.prose{font-family:var(--read);font-size:var(--fs);line-height:var(--lh);text-align:var(--align);
+.prose{font-family:var(--read);font-size:var(--fs);line-height:var(--lh);text-align:var(--align);text-justify:inter-word;hyphens:none;word-spacing:-.02em;
   text-justify:inter-word;hyphens:auto}
 .prose p{margin-bottom:1.05em}
 /* لا تاج حرفي: الحروف العربية متصلة، وفصل أولها يشوّه الكلمة.
@@ -1008,11 +1014,12 @@ function autoScrollRender(){
 }
 function autoScrollTick(now){
   if(!autoScrollState.active||autoScrollState.paused)return;
+  if(document.body.classList.contains('mk-overlay-open')){autoScrollPause(true);return;}
   if(!autoScrollState.last)autoScrollState.last=now;
   const dt=Math.min(.05,(now-autoScrollState.last)/1000);autoScrollState.last=now;
   const distance=autoScrollState.carry+autoScrollRates[autoScrollPrefs.speed]*dt,whole=Math.floor(distance);
-  autoScrollState.carry=distance-whole;if(whole>0)scrollBy(0,whole);
-  const h=document.documentElement,atEnd=h.scrollTop+innerHeight>=h.scrollHeight-3;
+  autoScrollState.carry=distance-whole;if(whole>0)scrollBy({top:whole,behavior:'instant'});
+  const h=document.documentElement,atEnd=h.scrollTop+innerHeight>=h.scrollHeight-24;
   if(atEnd){
     if(typeof mediaState!=='undefined'&&mediaState.active){autoScrollPause(true);toast('وصلت إلى نهاية الفصل — التمرير متوقف مؤقتًا');return;}
     if(cur<CH.length-1){autoScrollState.last=0;autoScrollState.carry=0;go(cur+1,false,false,true);autoScrollState.raf=requestAnimationFrame(autoScrollTick);return;}
@@ -1041,9 +1048,9 @@ function autoScrollToggle(){if(!autoScrollState.active)autoScrollStart();else if
 function setAutoScrollSpeed(v){autoScrollPrefs.speed=Math.max(1,Math.min(5,+v||2));S.set('autoScrollPrefs',autoScrollPrefs);autoScrollRender();}
 $('#bScroll').onclick=autoScrollToggle;$('#autoScrollAction').onclick=autoScrollToggle;$('#scrollDockToggle').onclick=autoScrollToggle;$('#scrollDockStop').onclick=()=>autoScrollStop();
 $('#autoScrollSpeed').oninput=e=>setAutoScrollSpeed(e.target.value);$('#scrollDockSpeed').oninput=e=>setAutoScrollSpeed(e.target.value);
-$('#page').addEventListener('touchstart',()=>autoScrollPause(),{passive:true});
+document.addEventListener('touchstart',e=>{if(autoScrollState.active&&!e.target.closest?.('#scrollDock,#prefs,#autoScrollAction'))autoScrollPause();},{passive:true,capture:true});
 $('#page').addEventListener('wheel',()=>autoScrollPause(),{passive:true});
-document.addEventListener('visibilitychange',()=>{if(document.hidden)autoScrollPause(true);});
+let autoScrollWasRunningBeforeHidden=false;document.addEventListener('visibilitychange',()=>{if(document.hidden){autoScrollWasRunningBeforeHidden=autoScrollState.active&&!autoScrollState.paused;if(autoScrollWasRunningBeforeHidden)autoScrollPause(true);}else if(autoScrollWasRunningBeforeHidden&&!document.body.classList.contains('mk-overlay-open')){autoScrollWasRunningBeforeHidden=false;autoScrollResume();}});
 autoScrollRender();
 
 /* ══ البحث ══ */
@@ -1477,10 +1484,11 @@ if('serviceWorker' in navigator && (location.protocol==='https:' || location.hos
   addEventListener('load',()=>navigator.serviceWorker.register('/sw.js').then(r=>r.update()).catch(()=>{}));
 }
 </script>
-<script src="/reader-formats.js?v=30"></script>
-<script src="/reader-tools.js?v=30"></script>
-<script src="/reader-ambience.js?v=30"></script>
-<script src="/reader-studio.js?v=30"></script>
-<script src="/reader-mixer.js?v=30"></script>
-<script src="/reader-smart-suite.js?v=30"></script>
+<script src="/reader-formats.js?v=31"></script>
+<script src="/reader-tools.js?v=31"></script>
+<script src="/reader-ambience.js?v=31"></script>
+<script src="/reader-studio.js?v=31"></script>
+<script src="/reader-mixer.js?v=31"></script>
+<script src="/reader-smart-suite.js?v=31"></script>
+<script defer data-mafateeh-master-fixes="31" src="/reader-master-fixes.js?v=31"></script>
 </body></html>

@@ -1,0 +1,20 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+const read=p=>fs.readFileSync(p,'utf8');
+test('mobile scroll and PWA regressions are fixed',()=>{
+ const r=read('public/reader.html'),m=read('public/reader-master-fixes.js'),sc=read('public/reader-smart-suite.css'),mx=read('public/reader-mixer.css'),sw=read('public/sw.js'),manifest=JSON.parse(read('public/manifest.webmanifest')),smart=read('public/reader-smart-suite.js');
+ assert.ok(r.includes("scrollBy({top:whole,behavior:'instant'})"));
+ assert.ok(r.includes("classList.contains('mk-overlay-open')"));
+ assert.ok(r.includes('scrollHeight-24'));
+ assert.ok(!r.includes('scrollBy(0,whole)'));
+ assert.ok(m.includes('function scrollableAncestor'));
+ assert.ok(m.includes("autoScrollPause==='function'"));
+ assert.ok(!sc.includes('body.smart-modal-open{position:fixed'));
+ assert.ok(!mx.includes('html.mixer-open,html.mixer-open body{overflow:hidden'));
+ assert.equal(manifest.start_url,'/reader.html?v=31');
+ assert.ok(sw.includes('/reader-master-fixes.js?v=31'));
+ assert.ok(r.includes('data-platform="other"'));
+ assert.ok(smart.includes('PDF_PART_MAX_BYTES=12*1024*1024'));
+ assert.ok(smart.includes("/piper-worker.js?v=31"));
+});

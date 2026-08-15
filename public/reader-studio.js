@@ -27,7 +27,7 @@
     link.href = url; link.download = name; document.body.appendChild(link); link.click(); link.remove();
     setTimeout(() => URL.revokeObjectURL(url), 8000);
   });
-  const openSheet = RT.openSheet || ((name) => { one(`#${name}Shade`)?.classList.add('on'); one(`#${name}Shade`)?.setAttribute('aria-hidden', 'false'); });
+  const openSheet = (name) => { try { if (typeof autoScrollPause === 'function') autoScrollPause(true); } catch (_) {} if (RT.openSheet) return RT.openSheet(name); one(`#${name}Shade`)?.classList.add('on'); one(`#${name}Shade`)?.setAttribute('aria-hidden', 'false'); requestAnimationFrame(()=>window.MafateehMaster?.syncOverlay?.()); };
   const closeSheet = RT.closeSheet || ((name) => { one(`#${name}Shade`)?.classList.remove('on'); one(`#${name}Shade`)?.setAttribute('aria-hidden', 'true'); });
 
   /* حفظ الملف: على الجوال تكون «المشاركة» أضمن طريق إلى تطبيق الملفات. */

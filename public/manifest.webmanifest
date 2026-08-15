@@ -4,11 +4,11 @@
   "description": "مكتبة كتب عربية ذكية: قارئ صوتي متزامن، تحويل PDF، افهم كتابي، اقرأ أي نص، ومؤثرات صوتية متعددة.",
   "lang": "ar",
   "dir": "rtl",
-  "start_url": "/reader.html?v=22",
+  "start_url": "/reader.html?v=31",
   "scope": "/",
   "display": "standalone",
-  "background_color": "#0A1324",
-  "theme_color": "#1F3352",
+  "background_color": "#00152C",
+  "theme_color": "#0D2138",
   "orientation": "portrait-primary",
   "icons": [
     {

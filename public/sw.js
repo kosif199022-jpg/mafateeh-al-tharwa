@@ -1,6 +1,6 @@
-const CACHE_NAME = "mafateeh-al-tharwa-v30";
-const RUNTIME_CACHE = "mafateeh-runtime-v30";
-const PIPER_RUNTIME_CACHE = "mafateeh-piper-runtime-v22";
+const CACHE_NAME = "mafateeh-al-tharwa-v31";
+const RUNTIME_CACHE = "mafateeh-runtime-v31";
+const PIPER_RUNTIME_CACHE = "mafateeh-piper-runtime-v31";
 const OFFLINE_FALLBACK = "/reader.html?v=30";
 const OFFLINE_FILES = [
   OFFLINE_FALLBACK,
@@ -25,9 +25,10 @@ const OFFLINE_FILES = [
   "/icons/apple-touch-icon.png"
 ];
 const PERSISTENT_CACHE_PREFIXES = ["mafateeh-narrator-bank-", "mafateeh-smart-voice-", "mafateeh-piper-"];
-const EXTERNAL_RUNTIME_CACHE = "mafateeh-external-runtime-v30";
+const EXTERNAL_RUNTIME_CACHE = "mafateeh-external-runtime-v31";
 const TRUSTED_PIPER_HOSTS = new Set([
   "cdn.jsdelivr.net",
+  "esm.sh",
   "huggingface.co",
   "cdn-lfs.huggingface.co",
   "cas-bridge.xethub.hf.co",
