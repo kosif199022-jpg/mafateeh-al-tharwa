@@ -47,6 +47,9 @@ jobs:
       - name: Apply Master v33 iOS fixes
         run: node scripts/apply-v33-ios-fixes.mjs
 
+      - name: Apply modified 46-chapter book
+        run: node scripts/apply-modified-book.mjs
+
       - name: Master regression guard
         run: scripts/master-regression.sh
 
@@ -99,6 +102,7 @@ jobs:
           const checks = [
             ['reader master fixes loaded', '/tmp/mafateeh-reader.html', `reader-master-fixes.js?v=${major}`],
             ['instant auto-scroll enabled', '/tmp/mafateeh-reader.html', "behavior:'instant'"],
+            ['modified chapter 46 live', '/tmp/mafateeh-reader.html', '"no": 46'],
             ['master fixes cached offline', '/tmp/mafateeh-sw.js', `/reader-master-fixes.js?v=${major}`],
             ['PWA start URL versioned', '/tmp/mafateeh-manifest.webmanifest', `"start_url": "/reader.html?v=${major}"`],
             ['smart floating dock hidden', '/tmp/mafateeh-smart.css', '#smartHubDock{display:none!important}'],
@@ -115,4 +119,4 @@ jobs:
           if (failed) process.exit(1);
           NODE
 
-          echo "Live smoke test passed for $LIVE_URL (v$expected_version)."
+          echo "Live smoke test passed for $LIVE_URL (v$expected_version, modified 46-chapter book)."
