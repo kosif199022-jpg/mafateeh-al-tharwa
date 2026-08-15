@@ -80,9 +80,13 @@ jobs:
 
           LIVE_VERSION="$live_version" EXPECTED_VERSION="$expected_version" node -e 'const live=JSON.parse(process.env.LIVE_VERSION || "{}"); if (live.version !== process.env.EXPECTED_VERSION) { console.error(`Live version mismatch: expected ${process.env.EXPECTED_VERSION}, got ${live.version || "missing"}`); process.exit(1); } console.log(`Live version OK: ${live.version}`);'
 
-          curl -fsS --retry 3 -H 'Cache-Control: no-cache' "$LIVE_URL/reader.html?cb=$cache_bust" | grep -Fq "reader-master-fixes.js?v=$expected_major"
-          curl -fsS --retry 3 -H 'Cache-Control: no-cache' "$LIVE_URL/reader.html?cb=$cache_bust" | grep -Fq "behavior:'instant'"
-          curl -fsS --retry 3 -H 'Cache-Control: no-cache' "$LIVE_URL/sw.js?cb=$cache_bust" | grep -Fq "/reader-master-fixes.js?v=$expected_major"
-          curl -fsS --retry 3 -H 'Cache-Control: no-cache' "$LIVE_URL/manifest.webmanifest?cb=$cache_bust" | grep -Fq "\"start_url\": \"/reader.html?v=$expected_major\""
+          curl -fsS --retry 3 -H 'Cache-Control: no-cache' "$LIVE_URL/reader.html?cb=$cache_bust" -o /tmp/mafateeh-reader.html
+          curl -fsS --retry 3 -H 'Cache-Control: no-cache' "$LIVE_URL/sw.js?cb=$cache_bust" -o /tmp/mafateeh-sw.js
+          curl -fsS --retry 3 -H 'Cache-Control: no-cache' "$LIVE_URL/manifest.webmanifest?cb=$cache_bust" -o /tmp/mafateeh-manifest.webmanifest
+
+          grep -Fq "reader-master-fixes.js?v=$expected_major" /tmp/mafateeh-reader.html
+          grep -Fq "behavior:'instant'" /tmp/mafateeh-reader.html
+          grep -Fq "/reader-master-fixes.js?v=$expected_major" /tmp/mafateeh-sw.js
+          grep -Fq "\"start_url\": \"/reader.html?v=$expected_major\"" /tmp/mafateeh-manifest.webmanifest
 
           echo "Live smoke test passed for $LIVE_URL (v$expected_version)."
