@@ -41,6 +41,9 @@ jobs:
       - name: Prepare scripts
         run: chmod +x scripts/*.sh
 
+      - name: Apply Master v32 reader fixes
+        run: node scripts/apply-v32-reader-fixes.mjs
+
       - name: Master regression guard
         run: scripts/master-regression.sh
 
@@ -83,6 +86,8 @@ jobs:
           curl -LfsS --max-redirs 5 --retry 3 -H 'Cache-Control: no-cache' "$LIVE_URL/reader.html?cb=$cache_bust" -o /tmp/mafateeh-reader.html
           curl -LfsS --max-redirs 5 --retry 3 -H 'Cache-Control: no-cache' "$LIVE_URL/sw.js?cb=$cache_bust" -o /tmp/mafateeh-sw.js
           curl -LfsS --max-redirs 5 --retry 3 -H 'Cache-Control: no-cache' "$LIVE_URL/manifest.webmanifest?cb=$cache_bust" -o /tmp/mafateeh-manifest.webmanifest
+          curl -LfsS --max-redirs 5 --retry 3 -H 'Cache-Control: no-cache' "$LIVE_URL/reader-smart-suite.css?cb=$cache_bust" -o /tmp/mafateeh-smart.css
+          curl -LfsS --max-redirs 5 --retry 3 -H 'Cache-Control: no-cache' "$LIVE_URL/reader-mixer.css?cb=$cache_bust" -o /tmp/mafateeh-mixer.css
 
           EXPECTED_MAJOR="$expected_major" node <<'NODE'
           const fs = require('fs');
@@ -92,6 +97,8 @@ jobs:
             ['instant auto-scroll enabled', '/tmp/mafateeh-reader.html', "behavior:'instant'"],
             ['master fixes cached offline', '/tmp/mafateeh-sw.js', `/reader-master-fixes.js?v=${major}`],
             ['PWA start URL versioned', '/tmp/mafateeh-manifest.webmanifest', `"start_url": "/reader.html?v=${major}"`],
+            ['smart floating dock hidden', '/tmp/mafateeh-smart.css', '#smartHubDock{display:none!important}'],
+            ['mixer floating dock hidden', '/tmp/mafateeh-mixer.css', '.mixer-dock{display:none!important}'],
           ];
           let failed = false;
           for (const [label, file, needle] of checks) {
