@@ -20,8 +20,12 @@ node - <<'NODE'
 const fs=require('fs');const m=JSON.parse(fs.readFileSync('public/audio/manifest.json','utf8'));
 if(!Array.isArray(m.chapters)||m.chapters.length!==34)throw new Error(`manifest chapters=${m.chapters?.length}`);
 NODE
-grep -q 'reader-mixer.js?v=31' public/reader.html || fail 'reader.html does not load Mixer Master'
-grep -q 'reader-smart-suite.js?v=31' public/reader.html || fail 'reader.html does not load Smart Suite Master'
-grep -q 'reader-master-fixes.js?v=31' public/reader.html || fail 'Master runtime fix direct loader missing'
+version=$(node -p "require('./public/master-version.json').version")
+major=${version%%.*}
+grep -q "reader-mixer.js?v=$major" public/reader.html || fail 'reader.html does not load Mixer Master'
+grep -q "reader-smart-suite.js?v=$major" public/reader.html || fail 'reader.html does not load Smart Suite Master'
+grep -q "reader-master-fixes.js?v=$major" public/reader.html || fail 'Master runtime fix direct loader missing'
+grep -q '#smartHubDock{display:none!important}' public/reader-smart-suite.css || fail 'Smart dock is not hidden for distraction-free reading'
+grep -q '.mixer-dock{display:none!important}' public/reader-mixer.css || fail 'Mixer dock is not hidden for distraction-free reading'
 if grep -q 'rm -f public/reader-mixer' .github/workflows/deploy-cloudflare.yml; then fail 'Deployment workflow still strips advanced features'; fi
-echo "Master regression guard passed: 34 MP3s, $bytes bytes, advanced reader, AI, Piper and offline runtime present."
+echo "Master regression guard passed: v$version, 34 MP3s, $bytes bytes, advanced reader, AI, Piper, offline runtime and distraction-free UI present."
