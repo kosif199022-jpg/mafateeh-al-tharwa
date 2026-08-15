@@ -1,0 +1,244 @@
+name: Apply Mafateeh Master v31 Fixes
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/apply-master-v31-fixes.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CLOUDFLARE_ACCOUNT_ID: 9ff3d8494afab356ecbf95a2a231a6b5
+  CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+
+jobs:
+  repair-build-deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22.19.0'
+          cache: npm
+
+      - name: Apply v31 code repairs
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          from pathlib import Path
+          import json, re
+
+          def read(path): return Path(path).read_text(encoding='utf-8')
+          def write(path, text): Path(path).write_text(text, encoding='utf-8')
+          def must_replace(text, old, new, label):
+              if old not in text:
+                  raise SystemExit(f'missing replacement target: {label}')
+              return text.replace(old, new)
+
+          # ---------- reader.html: platform, SW, autoscroll, typography, v31 ----------
+          p='public/reader.html'; s=read(p)
+          s=s.replace('v=30','v=31')
+          s=must_replace(s,
+              '<html lang="ar" dir="rtl" data-theme="light" data-platform="ios">',
+              '<html lang="ar" dir="rtl" data-theme="light" data-platform="other">',
+              'dynamic platform html tag')
+          platform_script='''<script>\n(()=>{const n=navigator,p=n.platform||\"\",ua=n.userAgent||\"\";document.documentElement.dataset.platform=(/iPad|iPhone|iPod/.test(p)||(/Mac/.test(p)&&n.maxTouchPoints>1)||/iPad|iPhone|iPod/.test(ua))?\"ios\":\"other\"})();\n</script>'''
+          s=must_replace(s,
+              '<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">',
+              '<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">\n'+platform_script,
+              'platform script')
+          early_sw='''<script>\nif(\"serviceWorker\" in navigator&&(location.protocol===\"https:\"||location.hostname===\"localhost\")){navigator.serviceWorker.register(\"/sw.js\").then(r=>r.update()).catch(()=>{});}\n</script>'''
+          s=must_replace(s,
+              '<link rel="manifest" href="/manifest.webmanifest">',
+              '<link rel="manifest" href="/manifest.webmanifest">\n'+early_sw,
+              'early service worker')
+          s=must_replace(s,'--read:var(--serif); --fs:22px; --lh:2.05; --measure:46rem; --align:justify;',
+                           '--read:var(--serif); --fs:22px; --lh:2.05; --measure:calc(var(--fs) * 32); --align:justify;',
+                           'dynamic reading measure')
+          # Improve Arabic justification without enabling hyphenation.
+          s=s.replace('text-align:var(--align)', 'text-align:var(--align);text-justify:inter-word;hyphens:none;word-spacing:-.02em')
+          # Autoscroll must be instant and must never run while a modal/body lock is active.
+          s=must_replace(s,
+              'function autoScrollTick(now){\n  if(!autoScrollState.active||autoScrollState.paused)return;',
+              'function autoScrollTick(now){\n  if(!autoScrollState.active||autoScrollState.paused)return;\n  if(document.body.classList.contains(\'mk-overlay-open\')){autoScrollPause(true);return;}',
+              'autoscroll overlay guard')
+          s=must_replace(s,'if(whole>0)scrollBy(0,whole);','if(whole>0)scrollBy({top:whole,behavior:\'instant\'});','instant autoscroll')
+          s=must_replace(s,'h.scrollHeight-3','h.scrollHeight-24','autoscroll end tolerance')
+          s=must_replace(s,
+              "$('#page').addEventListener('touchstart',()=>autoScrollPause(),{passive:true});",
+              "document.addEventListener('touchstart',e=>{if(autoScrollState.active&&!e.target.closest?.('#scrollDock,#prefs,#autoScrollAction'))autoScrollPause();},{passive:true,capture:true});",
+              'global touch pause')
+          s=must_replace(s,
+              "document.addEventListener('visibilitychange',()=>{if(document.hidden)autoScrollPause(true);});",
+              "let autoScrollWasRunningBeforeHidden=false;document.addEventListener('visibilitychange',()=>{if(document.hidden){autoScrollWasRunningBeforeHidden=autoScrollState.active&&!autoScrollState.paused;if(autoScrollWasRunningBeforeHidden)autoScrollPause(true);}else if(autoScrollWasRunningBeforeHidden&&!document.body.classList.contains('mk-overlay-open')){autoScrollWasRunningBeforeHidden=false;autoScrollResume();}});",
+              'visibility resume')
+          # Direct, deterministic loading of Master fixes (remove dependency on Smart Suite injection).
+          smart_tag='<script src="/reader-smart-suite.js?v=31"></script>'
+          if '/reader-master-fixes.js?v=31' not in s:
+              s=must_replace(s,smart_tag,smart_tag+'\n<script defer data-mafateeh-master-fixes="31" src="/reader-master-fixes.js?v=31"></script>', 'master fixes direct loader')
+          write(p,s)
+
+          # ---------- Smart Suite: single body lock owner, smaller PDF chunks, v31 Piper ----------
+          p='public/reader-smart-suite.js'; s=read(p)
+          old="let smartScrollY=0;function bodyLock(on){if(on&&!document.body.classList.contains('smart-modal-open')){smartScrollY=window.scrollY||document.documentElement.scrollTop||0;document.body.style.top=`-${smartScrollY}px`;document.body.classList.add('smart-modal-open')}else if(!on&&document.body.classList.contains('smart-modal-open')){document.body.classList.remove('smart-modal-open');document.body.style.top='';window.scrollTo(0,smartScrollY)}}"
+          new="function bodyLock(on){document.body.classList.toggle('smart-modal-open',!!on);if(on){try{autoScrollPause(true)}catch(_){}}requestAnimationFrame(()=>window.MafateehMaster?.syncOverlay?.())}"
+          s=must_replace(s,old,new,'smart body lock delegation')
+          s=s.replace("new Worker('/piper-worker.js?v=24'","new Worker('/piper-worker.js?v=31'")
+          s=s.replace('const IMPORT_BATCH=20, PDF_PART_TARGET_PAGES=180, PDF_PART_MAX_BYTES=44*1024*1024,',
+                      'const IMPORT_BATCH=20, PDF_PART_TARGET_PAGES=80, PDF_PART_MAX_BYTES=12*1024*1024,')
+          # Remove the late dynamic Master loader; reader.html now loads it explicitly.
+          s=re.sub(r"\n;\(\(\)=>\{if\(!document\.querySelector\('script\[data-mafateeh-master-fixes\]'\)\).*?\}\)\(\);\s*$",'\n',s,flags=re.S)
+          write(p,s)
+
+          # ---------- Studio: opening any sheet pauses autoscroll ----------
+          p='public/reader-studio.js'; s=read(p)
+          old="  const openSheet = RT.openSheet || ((name) => { one(`#${name}Shade`)?.classList.add('on'); one(`#${name}Shade`)?.setAttribute('aria-hidden', 'false'); });"
+          new="  const openSheet = (name) => { try { if (typeof autoScrollPause === 'function') autoScrollPause(true); } catch (_) {} if (RT.openSheet) return RT.openSheet(name); one(`#${name}Shade`)?.classList.add('on'); one(`#${name}Shade`)?.setAttribute('aria-hidden', 'false'); requestAnimationFrame(()=>window.MafateehMaster?.syncOverlay?.()); };"
+          s=must_replace(s,old,new,'studio pause autoscroll')
+          write(p,s)
+
+          # ---------- Mixer: no competing CSS body lock, pause autoscroll on open ----------
+          p='public/reader-mixer.js'; s=read(p)
+          s=must_replace(s,
+              "function open(){shade.classList.add('on');shade.setAttribute('aria-hidden','false');document.documentElement.classList.add('mixer-open');render()}",
+              "function open(){try{if(typeof autoScrollPause==='function')autoScrollPause(true)}catch(_){}shade.classList.add('on');shade.setAttribute('aria-hidden','false');document.documentElement.classList.add('mixer-open');render();requestAnimationFrame(()=>window.MafateehMaster?.syncOverlay?.())}",
+              'mixer open pause')
+          s=must_replace(s,
+              "function close(){shade.classList.remove('on');shade.setAttribute('aria-hidden','true');document.documentElement.classList.remove('mixer-open')}",
+              "function close(){shade.classList.remove('on');shade.setAttribute('aria-hidden','true');document.documentElement.classList.remove('mixer-open');requestAnimationFrame(()=>window.MafateehMaster?.syncOverlay?.())}",
+              'mixer close sync')
+          write(p,s)
+
+          p='public/reader-smart-suite.css'; s=read(p)
+          s=s.replace('body.smart-modal-open{overflow:hidden;touch-action:none}body.smart-modal-open .smart-sheet,body.smart-modal-open .smart-body,body.smart-modal-open .smart-textarea,body.smart-modal-open .smart-chat{touch-action:pan-y}',
+                      'body.smart-modal-open .smart-sheet,body.smart-modal-open .smart-body,body.smart-modal-open .smart-textarea,body.smart-modal-open .smart-chat{touch-action:pan-y}')
+          s=s.replace('body.smart-modal-open{position:fixed;width:100%;inset-inline:0;overflow:hidden!important;overscroll-behavior:none}\n','')
+          write(p,s)
+
+          p='public/reader-mixer.css'; s=read(p)
+          s=s.replace('html.mixer-open,html.mixer-open body{overflow:hidden!important}','')
+          write(p,s)
+
+          # ---------- Master fixes v31: true scroll ancestor + visibility/theme/dock controls ----------
+          p='public/reader-master-fixes.js'; s=read(p)
+          s=s.replace("const VERSION='30.0.0';","const VERSION='31.0.0';")
+          s=s.replace("const AUDIO_CACHE='mafateeh-audiobook-master-v30';","const AUDIO_CACHE='mafateeh-audiobook-master-v31';")
+          s=s.replace("'/reader-mixer.js?v=30','/reader-smart-suite.js?v=30','/reader-tools.js?v=30','/reader-studio.js?v=30','/piper-worker.js?v=30'",
+                      "'/reader-mixer.js?v=31','/reader-smart-suite.js?v=31','/reader-tools.js?v=31','/reader-studio.js?v=31','/piper-worker.js?v=31'")
+          s=s.replace('clients from old V13/V24 caches to Master v30','clients from old V13/V24/V30 caches to Master v31')
+          s=must_replace(s,
+              'function lockBody(){\n  if(locked)return;locked=true;lockY=scrollY||document.documentElement.scrollTop||0;',
+              "function lockBody(){\n  try{if(typeof autoScrollPause==='function')autoScrollPause(true)}catch(_){}\n  if(locked)return;locked=true;lockY=scrollY||document.documentElement.scrollTop||0;",
+              'master lock pauses autoscroll')
+          s=s.replace("b.classList.remove('mk-overlay-open');document.documentElement.classList.remove('mk-overlay-open');scrollTo(0,lockY);",
+                      "b.classList.remove('mk-overlay-open');document.documentElement.classList.remove('mk-overlay-open');requestAnimationFrame(()=>scrollTo({top:lockY,behavior:'instant'}));")
+          old="""// Stop touch-chain from moving the book behind an open modal while keeping the sheet scrollable.\nlet touchY=0;\ndocument.addEventListener('touchstart',e=>{touchY=e.touches?.[0]?.clientY||0},{passive:true,capture:true});\ndocument.addEventListener('touchmove',e=>{\n  if(!locked)return;const sc=e.target.closest?.(scrollSelectors);if(!sc){e.preventDefault();return}\n  const y=e.touches?.[0]?.clientY||touchY,dy=y-touchY;touchY=y;\n  const atTop=sc.scrollTop<=0,atBottom=Math.ceil(sc.scrollTop+sc.clientHeight)>=sc.scrollHeight;\n  if((atTop&&dy>0)||(atBottom&&dy<0))e.preventDefault();\n},{passive:false,capture:true});"""
+          new="""// Stop touch-chain from moving the book behind an open modal while keeping the nearest nested scroll container usable.\nfunction scrollableAncestor(el){\n  for(let node=el;node&&node!==document.body;node=node.parentElement){\n    const st=getComputedStyle(node),oy=st.overflowY;\n    if(/(auto|scroll)/.test(oy)&&node.scrollHeight>node.clientHeight+1)return node;\n  }\n  return null;\n}\nlet touchY=0;\ndocument.addEventListener('touchstart',e=>{touchY=e.touches?.[0]?.clientY||0},{passive:true,capture:true});\ndocument.addEventListener('touchmove',e=>{\n  if(!locked)return;const sc=scrollableAncestor(e.target);if(!sc){e.preventDefault();return}\n  const y=e.touches?.[0]?.clientY||touchY,dy=y-touchY;touchY=y;\n  const atTop=sc.scrollTop<=0,atBottom=Math.ceil(sc.scrollTop+sc.clientHeight)>=sc.scrollHeight;\n  if((atTop&&dy>0)||(atBottom&&dy<0))e.preventDefault();\n},{passive:false,capture:true});"""
+          s=must_replace(s,old,new,'nearest scrollable ancestor')
+          # Extend runtime styles: dock visibility + five extra reading themes.
+          marker='#mkMasterHealth{font-size:.86rem;margin-top:8px;min-height:1.6em}\n'
+          extra='''#mkMasterHealth{font-size:.86rem;margin-top:8px;min-height:1.6em}\nhtml.mk-hide-smart #smartHubDock{display:none!important}\nhtml.mk-hide-mixer #mixerDock{display:none!important}\nhtml.mk-hide-scroll #scrollDock{display:none!important}\nhtml[data-theme=ocean]{--bg:#eef7fb;--bg2:#e2f0f6;--surf:#fff;--ink:#123047;--ink2:#49697b;--line:#c8dfe8;--gold:#8a6532;--navy:#123047;--hl:rgba(72,145,174,.23)}\nhtml[data-theme=forest]{--bg:#f0f5ef;--bg2:#e4eee2;--surf:#fbfdf9;--ink:#203829;--ink2:#58705e;--line:#ccd9ca;--gold:#87652f;--navy:#203829;--hl:rgba(91,135,91,.22)}\nhtml[data-theme=sand]{--bg:#fbf3df;--bg2:#f2e6c8;--surf:#fffaf0;--ink:#4a3722;--ink2:#715c43;--line:#dfcfaa;--gold:#8a5d24;--navy:#4a3722;--hl:rgba(178,120,42,.2)}\nhtml[data-theme=midnight]{--bg:#00152c;--bg2:#0d2138;--surf:#112a46;--ink:#f7f3e9;--ink2:#bbc6d4;--line:#29425d;--gold:#f6cc85;--navy:#00152c;--hl:rgba(246,204,133,.25)}\nhtml[data-theme=contrast]{--bg:#fff;--bg2:#f5f5f5;--surf:#fff;--ink:#000;--ink2:#2a2a2a;--line:#777;--gold:#6d4b12;--navy:#000;--hl:#ffe06a}\n'''
+          if 'html.mk-hide-smart' not in s:
+              s=must_replace(s,marker,extra,'master UI styles')
+          insert_before='// Keep a tiny local error ledger for reproducible iPhone reports without sending user data anywhere.'
+          ui_code=r'''// Reader surface controls: dock visibility + additional themes.\nconst UI_PREF_KEY='mafateehMasterUiV31';\nfunction readUiPrefs(){try{return {...{smart:true,mixer:true,scroll:true,theme:''},...JSON.parse(localStorage.getItem(UI_PREF_KEY)||'{}')}}catch(_){return {smart:true,mixer:true,scroll:true,theme:''}}}\nlet uiPrefs=readUiPrefs();\nfunction applyUiPrefs(){\n  const root=document.documentElement;root.classList.toggle('mk-hide-smart',uiPrefs.smart===false);root.classList.toggle('mk-hide-mixer',uiPrefs.mixer===false);root.classList.toggle('mk-hide-scroll',uiPrefs.scroll===false);\n  if(uiPrefs.theme)root.dataset.theme=uiPrefs.theme;\n  try{localStorage.setItem(UI_PREF_KEY,JSON.stringify(uiPrefs))}catch(_){}\n}\nfunction injectMasterPrefs(){\n  const prefs=$('#prefs');if(!prefs||$('#mkMasterUiPrefs'))return false;\n  const wrap=document.createElement('section');wrap.id='mkMasterUiPrefs';wrap.style.cssText='margin:14px 0;padding:13px;border:1px solid var(--line);border-radius:14px;background:var(--bg2)';\n  wrap.innerHTML=`<h3 style="margin:0 0 8px;font-size:.9rem">واجهة القراءة</h3><div style="display:grid;gap:8px;font-size:.8rem"><label><input id="mkShowSmart" type="checkbox"> إظهار أيقونة المكتبة الذكية</label><label><input id="mkShowMixer" type="checkbox"> إظهار أيقونة Mix Pro</label><label><input id="mkShowScroll" type="checkbox"> إظهار شريط التمرير التلقائي</label><label>ثيم إضافي <select id="mkExtraTheme" style="width:100%;margin-top:5px;padding:8px;border:1px solid var(--line);border-radius:10px;background:var(--bg);color:var(--ink)"><option value="">استخدم الثيم الحالي</option><option value="ocean">أزرق هادئ</option><option value="forest">أخضر قارئ</option><option value="sand">ورقي رملي</option><option value="midnight">كحلي الهوية</option><option value="contrast">تباين عالٍ</option></select></label></div>`;\n  prefs.appendChild(wrap);\n  $('#mkShowSmart').checked=uiPrefs.smart!==false;$('#mkShowMixer').checked=uiPrefs.mixer!==false;$('#mkShowScroll').checked=uiPrefs.scroll!==false;$('#mkExtraTheme').value=uiPrefs.theme||'';\n  $('#mkShowSmart').onchange=e=>{uiPrefs.smart=e.target.checked;applyUiPrefs()};$('#mkShowMixer').onchange=e=>{uiPrefs.mixer=e.target.checked;applyUiPrefs()};$('#mkShowScroll').onchange=e=>{uiPrefs.scroll=e.target.checked;applyUiPrefs()};$('#mkExtraTheme').onchange=e=>{uiPrefs.theme=e.target.value;applyUiPrefs()};return true;\n}\napplyUiPrefs();if(!injectMasterPrefs()){const pm=new MutationObserver(()=>{if(injectMasterPrefs())pm.disconnect()});pm.observe(document.body,{subtree:true,childList:true})}\n\n'''.replace('\\n','\n')
+          if 'mafateehMasterUiV31' not in s:
+              s=s.replace(insert_before,ui_code+insert_before)
+          write(p,s)
+
+          # ---------- Piper: CDN fallback and clearer failures ----------
+          p='public/piper-worker.js'; s=read(p)
+          s=s.replace("const MODULE_URL = 'https://cdn.jsdelivr.net/npm/@mintplex-labs/piper-tts-web@1.0.5/+esm';\nconst DEFAULT_VOICE = 'ar_JO-kareem-medium';\nlet ttsPromise;\nconst load = () => ttsPromise || (ttsPromise = import(MODULE_URL));",
+          "const MODULE_URLS = ['https://cdn.jsdelivr.net/npm/@mintplex-labs/piper-tts-web@1.0.5/+esm','https://esm.sh/@mintplex-labs/piper-tts-web@1.0.5?bundle'];\nconst DEFAULT_VOICE = 'ar_JO-kareem-medium';\nlet ttsPromise;\nasync function loadModule(){let last;for(const url of MODULE_URLS){try{return await import(url)}catch(e){last=e}}throw new Error('piper_runtime_load_failed: '+(last?.message||'all_cdn_sources_failed'))}\nconst load = () => ttsPromise || (ttsPromise = loadModule().catch(e=>{ttsPromise=null;throw e}));")
+          write(p,s)
+
+          # ---------- PWA v31 and offline critical files ----------
+          p='public/sw.js'; s=read(p)
+          s=s.replace('v30','v31').replace('mafateeh-piper-runtime-v22','mafateeh-piper-runtime-v31')
+          if '"/reader-master-fixes.js?v=31"' not in s:
+              s=s.replace('  "/reader-smart-suite.js?v=31",','  "/reader-smart-suite.js?v=31",\n  "/reader-master-fixes.js?v=31",')
+          if '"esm.sh"' not in s:
+              s=s.replace('  "cdn.jsdelivr.net",','  "cdn.jsdelivr.net",\n  "esm.sh",')
+          write(p,s)
+
+          p='public/manifest.webmanifest'; m=json.loads(read(p));m['start_url']='/reader.html?v=31';m['background_color']='#00152C';m['theme_color']='#0D2138';write(p,json.dumps(m,ensure_ascii=False,indent=2)+'\n')
+          p='app/page.tsx'; s=read(p).replace('/reader.html?v=30','/reader.html?v=31'); write(p,s)
+          p='public/master-version.json'; m=json.loads(read(p));m['version']='31.0.0';m['sourceBase']='V13 + Smart Suite + Mixer Pro + Master v31 mobile/PWA/PDF fixes';write(p,json.dumps(m,ensure_ascii=False,separators=(',',':'))+'\n')
+
+          # ---------- PDF 413 protection ----------
+          p='app/api/ai/pdf/route.ts'; s=read(p).replace('const MAX_PDF_PART_BYTES = 48 * 1024 * 1024;','const MAX_PDF_PART_BYTES = 12 * 1024 * 1024;');write(p,s)
+
+          # ---------- Stricter same-origin protection for paid AI endpoints ----------
+          p='app/api/_lib/ai.ts'; s=read(p)
+          old='''  const origin = request.headers.get("origin");\n  if (!origin) return true;\n  try {\n    return new URL(origin).origin === new URL(request.url).origin;\n  } catch {\n    return false;\n  }'''
+          new='''  const origin = request.headers.get("origin");\n  const referer = request.headers.get("referer");\n  if (!origin && !referer) return false;\n  try {\n    const expected = new URL(request.url).origin;\n    if (origin && new URL(origin).origin !== expected) return false;\n    if (!origin && referer && new URL(referer).origin !== expected) return false;\n    return true;\n  } catch {\n    return false;\n  }'''
+          s=must_replace(s,old,new,'strict same origin')
+          write(p,s)
+
+          # ---------- Permanent regression checks ----------
+          Path('tests').mkdir(exist_ok=True)
+          test=r'''import test from 'node:test';\nimport assert from 'node:assert/strict';\nimport fs from 'node:fs';\nconst read=p=>fs.readFileSync(p,'utf8');\ntest('mobile scroll and PWA regressions are fixed',()=>{\n const r=read('public/reader.html'),m=read('public/reader-master-fixes.js'),sc=read('public/reader-smart-suite.css'),mx=read('public/reader-mixer.css'),sw=read('public/sw.js'),manifest=JSON.parse(read('public/manifest.webmanifest')),smart=read('public/reader-smart-suite.js');\n assert.ok(r.includes("scrollBy({top:whole,behavior:'instant'})"));\n assert.ok(r.includes("classList.contains('mk-overlay-open')"));\n assert.ok(r.includes('scrollHeight-24'));\n assert.ok(!r.includes('scrollBy(0,whole)'));\n assert.ok(m.includes('function scrollableAncestor'));\n assert.ok(m.includes("autoScrollPause==='function'"));\n assert.ok(!sc.includes('body.smart-modal-open{position:fixed'));\n assert.ok(!mx.includes('html.mixer-open,html.mixer-open body{overflow:hidden'));\n assert.equal(manifest.start_url,'/reader.html?v=31');\n assert.ok(sw.includes('/reader-master-fixes.js?v=31'));\n assert.ok(r.includes('data-platform="other"'));\n assert.ok(smart.includes('PDF_PART_MAX_BYTES=12*1024*1024'));\n assert.ok(smart.includes("/piper-worker.js?v=31"));\n});\n'''.replace('\\n','\n')
+          write('tests/scroll-regressions.test.mjs',test)
+
+          p='package.json'; pkg=json.loads(read(p));pkg['scripts']['test']='chmod +x scripts/*.sh && scripts/master-regression.sh && node --test tests/*.test.mjs && npm run build';write(p,json.dumps(pkg,ensure_ascii=False,indent=2)+'\n')
+
+          p='scripts/master-regression.sh'; s=read(p).replace('reader-mixer.js?v=30','reader-mixer.js?v=31').replace('reader-smart-suite.js?v=30','reader-smart-suite.js?v=31')
+          s=s.replace("grep -q 'reader-master-fixes.js' public/reader-smart-suite.js || fail 'Master runtime fix loader missing'", "grep -q 'reader-master-fixes.js?v=31' public/reader.html || fail 'Master runtime fix direct loader missing'")
+          if 'scroll-regressions.test.mjs' not in s:
+              s=s.replace('  public/reader-master-fixes.js public/piper-worker.js public/sw.js public/audio/manifest.json', '  public/reader-master-fixes.js public/piper-worker.js public/sw.js public/audio/manifest.json tests/scroll-regressions.test.mjs')
+          write(p,s)
+
+          # Ensure JS validation covers Master files, and document release.
+          p='FEATURES-MASTER.md'; s=read(p)
+          note='''\n## Master v31 — إصلاحات 15 أغسطس 2026\n- إصلاح التمرير التلقائي على Safari باستخدام instant scroll وحارس يمنع العمل أثناء أي Modal.\n- منع سباق تخطي الفصول، وتسامح نهاية الفصل 24px، واستئناف آمن بعد العودة للتطبيق.\n- تمرير الحاوية المتداخلة الأقرب بدل قائمة selectors ثابتة.\n- نظام قفل Body واحد فقط؛ Smart Suite وMix Pro يفوضان إلى Master.\n- تقسيم PDF إلى دفعات 12MB لمنع 413 وتقليل ضغط ذاكرة Worker.\n- Piper بتحميل احتياطي من CDN ثانٍ ورسائل خطأ أوضح.\n- إظهار/إخفاء المكتبة الذكية وMix Pro وشريط التمرير من الإعدادات + 5 ثيمات إضافية.\n- PWA موحد على v31 وMaster fixes داخل Offline precache وتسجيل Service Worker مبكرًا.\n- تحديد iOS ديناميكيًا بدل فرض قواعد Safari على كل الأجهزة.\n'''
+          if '## Master v31' not in s:s+=note
+          write(p,s)
+          PY
+
+      - name: Commit repaired Master v31
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add app public scripts tests package.json FEATURES-MASTER.md
+          git commit -m 'Repair mobile scrolling, PDF, Piper and PWA in Master v31'
+          git push origin HEAD:main
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Prepare scripts
+        run: chmod +x scripts/*.sh
+
+      - name: Run regression and unit tests
+        run: |
+          scripts/master-regression.sh
+          node --test tests/*.test.mjs
+          node --check public/reader-tools.js
+          node --check public/reader-ambience.js
+          node --check public/reader-studio.js
+          node --check public/reader-formats.js
+          node --check public/reader-mixer.js
+          node --check public/reader-smart-suite.js
+          node --check public/reader-master-fixes.js
+          node --check public/piper-worker.js
+
+      - name: Build production artifact
+        run: npm run build
+
+      - name: Verify Cloudflare credentials
+        run: test -n "$CLOUDFLARE_API_TOKEN"
+
+      - name: Deploy Master v31 to Cloudflare
+        run: npx wrangler deploy --name mafateeh-al-tharwa
