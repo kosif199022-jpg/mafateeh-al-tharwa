@@ -82,51 +82,60 @@ jobs:
           set -euo pipefail
           expected_version="$(node -p "require('./public/master-version.json').version")"
           expected_major="${expected_version%%.*}"
-          cache_bust="${GITHUB_SHA}-${GITHUB_RUN_ID}"
-          live_version=""
+          base_cb="${GITHUB_SHA}-${GITHUB_RUN_ID}"
 
-          for attempt in 1 2 3 4 5 6 7 8; do
-            live_version="$(curl -LfsS --max-redirs 5 --retry 2 --retry-delay 1 -H 'Cache-Control: no-cache' "$LIVE_URL/master-version.json?cb=$cache_bust" 2>/dev/null || true)"
-            if LIVE_VERSION="$live_version" EXPECTED_VERSION="$expected_version" node -e 'try { const live=JSON.parse(process.env.LIVE_VERSION || "{}"); process.exit(live.version === process.env.EXPECTED_VERSION ? 0 : 1); } catch { process.exit(1); }'; then
-              break
-            fi
-            sleep 3
-          done
+          check_live_assets() {
+            local attempt="$1"
+            local cb="${base_cb}-${attempt}-$(date +%s)"
+            curl -LfsS --max-redirs 5 --retry 2 -H 'Cache-Control: no-cache, no-store' "$LIVE_URL/master-version.json?cb=$cb" -o /tmp/mafateeh-version.json || return 1
+            curl -LfsS --max-redirs 5 --retry 2 -H 'Cache-Control: no-cache, no-store' "$LIVE_URL/reader.html?v=$expected_major&cb=$cb" -o /tmp/mafateeh-reader.html || return 1
+            curl -LfsS --max-redirs 5 --retry 2 -H 'Cache-Control: no-cache, no-store' "$LIVE_URL/sw.js?v=$expected_major&cb=$cb" -o /tmp/mafateeh-sw.js || return 1
+            curl -LfsS --max-redirs 5 --retry 2 -H 'Cache-Control: no-cache, no-store' "$LIVE_URL/manifest.webmanifest?v=$expected_major&cb=$cb" -o /tmp/mafateeh-manifest.webmanifest || return 1
+            curl -LfsS --max-redirs 5 --retry 2 -H 'Cache-Control: no-cache, no-store' "$LIVE_URL/reader-smart-suite.css?v=$expected_major&cb=$cb" -o /tmp/mafateeh-smart.css || return 1
+            curl -LfsS --max-redirs 5 --retry 2 -H 'Cache-Control: no-cache, no-store' "$LIVE_URL/reader-mixer.css?v=$expected_major&cb=$cb" -o /tmp/mafateeh-mixer.css || return 1
+            curl -LfsS --max-redirs 5 --retry 2 -H 'Cache-Control: no-cache, no-store' "$LIVE_URL/reader-master-fixes.js?v=$expected_major&cb=$cb" -o /tmp/mafateeh-master.js || return 1
 
-          LIVE_VERSION="$live_version" EXPECTED_VERSION="$expected_version" node -e 'const live=JSON.parse(process.env.LIVE_VERSION || "{}"); if (live.version !== process.env.EXPECTED_VERSION) { console.error(`Live version mismatch: expected ${process.env.EXPECTED_VERSION}, got ${live.version || "missing"}`); process.exit(1); } console.log(`Live version OK: ${live.version}`);'
-
-          curl -LfsS --max-redirs 5 --retry 3 -H 'Cache-Control: no-cache' "$LIVE_URL/reader.html?cb=$cache_bust" -o /tmp/mafateeh-reader.html
-          curl -LfsS --max-redirs 5 --retry 3 -H 'Cache-Control: no-cache' "$LIVE_URL/sw.js?cb=$cache_bust" -o /tmp/mafateeh-sw.js
-          curl -LfsS --max-redirs 5 --retry 3 -H 'Cache-Control: no-cache' "$LIVE_URL/manifest.webmanifest?cb=$cache_bust" -o /tmp/mafateeh-manifest.webmanifest
-          curl -LfsS --max-redirs 5 --retry 3 -H 'Cache-Control: no-cache' "$LIVE_URL/reader-smart-suite.css?cb=$cache_bust" -o /tmp/mafateeh-smart.css
-          curl -LfsS --max-redirs 5 --retry 3 -H 'Cache-Control: no-cache' "$LIVE_URL/reader-mixer.css?cb=$cache_bust" -o /tmp/mafateeh-mixer.css
-          curl -LfsS --max-redirs 5 --retry 3 -H 'Cache-Control: no-cache' "$LIVE_URL/reader-master-fixes.js?cb=$cache_bust" -o /tmp/mafateeh-master.js
-
-          EXPECTED_MAJOR="$expected_major" node <<'NODE'
+            EXPECTED_VERSION="$expected_version" EXPECTED_MAJOR="$expected_major" node <<'NODE'
           const fs = require('fs');
+          const expected = process.env.EXPECTED_VERSION;
           const major = process.env.EXPECTED_MAJOR;
+          const version = JSON.parse(fs.readFileSync('/tmp/mafateeh-version.json','utf8'));
           const reader = fs.readFileSync('/tmp/mafateeh-reader.html','utf8');
           const master = fs.readFileSync('/tmp/mafateeh-master.js','utf8');
+          const sw = fs.readFileSync('/tmp/mafateeh-sw.js','utf8');
+          const manifest = fs.readFileSync('/tmp/mafateeh-manifest.webmanifest','utf8');
+          const smart = fs.readFileSync('/tmp/mafateeh-smart.css','utf8');
+          const mixer = fs.readFileSync('/tmp/mafateeh-mixer.css','utf8');
           const checks = [
+            ['live version', version.version === expected],
             ['reader master fixes loaded', reader.includes(`reader-master-fixes.js?v=${major}`)],
             ['instant auto-scroll enabled', reader.includes("behavior:'instant'")],
             ['real scrolling element used', reader.includes('document.scrollingElement||document.documentElement')],
             ['visual viewport used', reader.includes('window.visualViewport?.height||window.innerHeight')],
             ['modified chapter 46 live', /"no"\s*:\s*46/.test(reader)],
-            ['master fixes cached offline', fs.readFileSync('/tmp/mafateeh-sw.js','utf8').includes(`/reader-master-fixes.js?v=${major}`)],
-            ['PWA start URL versioned', fs.readFileSync('/tmp/mafateeh-manifest.webmanifest','utf8').includes(`"start_url": "/reader.html?v=${major}"`)],
-            ['smart floating dock hidden', fs.readFileSync('/tmp/mafateeh-smart.css','utf8').includes('#smartHubDock{display:none!important}')],
-            ['mixer floating dock hidden', fs.readFileSync('/tmp/mafateeh-mixer.css','utf8').includes('.mixer-dock{display:none!important}')],
+            ['master fixes cached offline', sw.includes(`/reader-master-fixes.js?v=${major}`)],
+            ['PWA start URL versioned', manifest.includes(`"start_url": "/reader.html?v=${major}"`)],
+            ['smart floating dock hidden', smart.includes('#smartHubDock{display:none!important}')],
+            ['mixer floating dock hidden', mixer.includes('.mixer-dock{display:none!important}')],
             ['iOS direct scroll fallback present', master.includes('Mafateeh iOS direct-scroll fallback v34')],
+            ['runtime is v34', master.includes("const VERSION='34.0.0';")],
             ['root overflow lock removed', !master.includes("h.style.overflow='hidden'")],
             ['body touch lock removed', !master.includes("b.style.touchAction='none'")],
           ];
           let failed = false;
           for (const [label, ok] of checks) {
-            console.log(`${ok ? 'PASS' : 'FAIL'}: ${label}`);
+            console.log(`${ok ? 'PASS' : 'WAIT'}: ${label}`);
             if (!ok) failed = true;
           }
           if (failed) process.exit(1);
           NODE
+          }
 
+          ok=0
+          for attempt in $(seq 1 12); do
+            echo "Live asset propagation check $attempt/12..."
+            if check_live_assets "$attempt"; then ok=1; break; fi
+            sleep 4
+          done
+          [ "$ok" -eq 1 ] || { echo '::error::Cloudflare assets did not converge to the same v34 deployment in time.'; exit 1; }
           echo "Live smoke test passed for $LIVE_URL (v$expected_version, modified 46-chapter book, permanent iPhone scrolling)."
