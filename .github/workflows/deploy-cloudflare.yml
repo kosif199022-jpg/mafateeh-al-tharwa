@@ -53,11 +53,17 @@ jobs:
       - name: Apply Master v34 permanent scroll fixes
         run: node scripts/apply-v34-scroll-fixes.mjs
 
+      - name: Apply Master v35 unified modal fixes
+        run: node scripts/apply-v35-scroll-fixes.mjs
+
       - name: Master regression guard
         run: scripts/master-regression.sh
 
-      - name: v34 scroll regression checks
+      - name: v34 base scroll regression checks
         run: node tests/scroll-v34-regression.test.mjs
+
+      - name: v35 all-modal scroll regression checks
+        run: node tests/scroll-v35-regression.test.mjs
 
       - name: Validate reader JavaScript
         run: |
@@ -93,6 +99,7 @@ jobs:
             curl -LfsS --max-redirs 5 --retry 2 -H 'Cache-Control: no-cache, no-store' "$LIVE_URL/manifest.webmanifest?v=$expected_major&cb=$cb" -o /tmp/mafateeh-manifest.webmanifest || return 1
             curl -LfsS --max-redirs 5 --retry 2 -H 'Cache-Control: no-cache, no-store' "$LIVE_URL/reader-smart-suite.css?v=$expected_major&cb=$cb" -o /tmp/mafateeh-smart.css || return 1
             curl -LfsS --max-redirs 5 --retry 2 -H 'Cache-Control: no-cache, no-store' "$LIVE_URL/reader-mixer.css?v=$expected_major&cb=$cb" -o /tmp/mafateeh-mixer.css || return 1
+            curl -LfsS --max-redirs 5 --retry 2 -H 'Cache-Control: no-cache, no-store' "$LIVE_URL/reader-tools.css?v=$expected_major&cb=$cb" -o /tmp/mafateeh-tools.css || return 1
             curl -LfsS --max-redirs 5 --retry 2 -H 'Cache-Control: no-cache, no-store' "$LIVE_URL/reader-master-fixes.js?v=$expected_major&cb=$cb" -o /tmp/mafateeh-master.js || return 1
 
             EXPECTED_VERSION="$expected_version" EXPECTED_MAJOR="$expected_major" node <<'NODE'
@@ -106,6 +113,7 @@ jobs:
           const manifest = fs.readFileSync('/tmp/mafateeh-manifest.webmanifest','utf8');
           const smart = fs.readFileSync('/tmp/mafateeh-smart.css','utf8');
           const mixer = fs.readFileSync('/tmp/mafateeh-mixer.css','utf8');
+          const tools = fs.readFileSync('/tmp/mafateeh-tools.css','utf8');
           const checks = [
             ['live version', version.version === expected],
             ['reader master fixes loaded', reader.includes(`reader-master-fixes.js?v=${major}`)],
@@ -118,7 +126,11 @@ jobs:
             ['smart floating dock hidden', smart.includes('#smartHubDock{display:none!important}')],
             ['mixer floating dock hidden', mixer.includes('.mixer-dock{display:none!important}')],
             ['iOS direct scroll fallback present', master.includes('Mafateeh iOS direct-scroll fallback v34')],
-            ['runtime is v34', master.includes("const VERSION='34.0.0';")],
+            ['runtime is v35', master.includes("const VERSION='35.0.0';")],
+            ['tool sheet primary scroller', master.includes("'.tool-shade.on .tool-sheet'")),
+            ['form control swipe escape', master.includes('textarea,input,select,[contenteditable="true"]')],
+            ['tool sheet CSS fix live', tools.includes('Master v35 — unified iPhone tool-sheet scrolling')],
+            ['tool sheet vertical scrolling live', tools.includes('overflow-y:auto!important')],
             ['root overflow lock removed', !master.includes("h.style.overflow='hidden'")],
             ['body touch lock removed', !master.includes("b.style.touchAction='none'")],
           ];
@@ -137,5 +149,5 @@ jobs:
             if check_live_assets "$attempt"; then ok=1; break; fi
             sleep 4
           done
-          [ "$ok" -eq 1 ] || { echo '::error::Cloudflare assets did not converge to the same v34 deployment in time.'; exit 1; }
-          echo "Live smoke test passed for $LIVE_URL (v$expected_version, modified 46-chapter book, permanent iPhone scrolling)."
+          [ "$ok" -eq 1 ] || { echo '::error::Cloudflare assets did not converge to the same v35 deployment in time.'; exit 1; }
+          echo "Live smoke test passed for $LIVE_URL (v$expected_version, all modal/tool-sheet scrolling unified)."
