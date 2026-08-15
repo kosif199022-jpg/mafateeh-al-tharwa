@@ -50,8 +50,14 @@ jobs:
       - name: Apply modified 46-chapter book
         run: node scripts/apply-modified-book.mjs
 
+      - name: Apply Master v34 permanent scroll fixes
+        run: node scripts/apply-v34-scroll-fixes.mjs
+
       - name: Master regression guard
         run: scripts/master-regression.sh
+
+      - name: v34 scroll regression checks
+        run: node tests/scroll-v34-regression.test.mjs
 
       - name: Validate reader JavaScript
         run: |
@@ -99,24 +105,28 @@ jobs:
           EXPECTED_MAJOR="$expected_major" node <<'NODE'
           const fs = require('fs');
           const major = process.env.EXPECTED_MAJOR;
+          const reader = fs.readFileSync('/tmp/mafateeh-reader.html','utf8');
+          const master = fs.readFileSync('/tmp/mafateeh-master.js','utf8');
           const checks = [
-            ['reader master fixes loaded', '/tmp/mafateeh-reader.html', `reader-master-fixes.js?v=${major}`],
-            ['instant auto-scroll enabled', '/tmp/mafateeh-reader.html', "behavior:'instant'"],
-            ['modified chapter 46 live', '/tmp/mafateeh-reader.html', '"no": 46'],
-            ['master fixes cached offline', '/tmp/mafateeh-sw.js', `/reader-master-fixes.js?v=${major}`],
-            ['PWA start URL versioned', '/tmp/mafateeh-manifest.webmanifest', `"start_url": "/reader.html?v=${major}"`],
-            ['smart floating dock hidden', '/tmp/mafateeh-smart.css', '#smartHubDock{display:none!important}'],
-            ['mixer floating dock hidden', '/tmp/mafateeh-mixer.css', '.mixer-dock{display:none!important}'],
-            ['iOS body touch lock removed', '/tmp/mafateeh-master.js', "b.style.overflow='hidden';"],
+            ['reader master fixes loaded', reader.includes(`reader-master-fixes.js?v=${major}`)],
+            ['instant auto-scroll enabled', reader.includes("behavior:'instant'")],
+            ['real scrolling element used', reader.includes('document.scrollingElement||document.documentElement')],
+            ['visual viewport used', reader.includes('window.visualViewport?.height||window.innerHeight')],
+            ['modified chapter 46 live', /"no"\s*:\s*46/.test(reader)],
+            ['master fixes cached offline', fs.readFileSync('/tmp/mafateeh-sw.js','utf8').includes(`/reader-master-fixes.js?v=${major}`)],
+            ['PWA start URL versioned', fs.readFileSync('/tmp/mafateeh-manifest.webmanifest','utf8').includes(`"start_url": "/reader.html?v=${major}"`)],
+            ['smart floating dock hidden', fs.readFileSync('/tmp/mafateeh-smart.css','utf8').includes('#smartHubDock{display:none!important}')],
+            ['mixer floating dock hidden', fs.readFileSync('/tmp/mafateeh-mixer.css','utf8').includes('.mixer-dock{display:none!important}')],
+            ['iOS direct scroll fallback present', master.includes('Mafateeh iOS direct-scroll fallback v34')],
+            ['root overflow lock removed', !master.includes("h.style.overflow='hidden'")],
+            ['body touch lock removed', !master.includes("b.style.touchAction='none'")],
           ];
           let failed = false;
-          for (const [label, file, needle] of checks) {
-            const content = fs.readFileSync(file, 'utf8');
-            const ok = content.includes(needle);
+          for (const [label, ok] of checks) {
             console.log(`${ok ? 'PASS' : 'FAIL'}: ${label}`);
             if (!ok) failed = true;
           }
           if (failed) process.exit(1);
           NODE
 
-          echo "Live smoke test passed for $LIVE_URL (v$expected_version, modified 46-chapter book)."
+          echo "Live smoke test passed for $LIVE_URL (v$expected_version, modified 46-chapter book, permanent iPhone scrolling)."
