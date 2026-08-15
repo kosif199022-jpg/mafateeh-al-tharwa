@@ -1,0 +1,100 @@
+name: Apply Mafateeh Review v31
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/apply-review-v31.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CLOUDFLARE_ACCOUNT_ID: 9ff3d8494afab356ecbf95a2a231a6b5
+  CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+
+jobs:
+  patch-test-deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout complete source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22.19.0'
+          cache: npm
+
+      - name: Apply validated v31 review patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat .v31-patch/part* | base64 -d | gunzip > /tmp/v31.patch
+          echo "Patch bytes: $(wc -c < /tmp/v31.patch)"
+          git apply --check /tmp/v31.patch
+          git apply /tmp/v31.patch
+          rm -rf .v31-patch
+          rm -f .github/workflows/upgrade-master-v30.yml
+          rm -f public/reader-mixer-core-v22.js
+          rm -f .github/workflows/apply-review-v31.yml
+          chmod +x scripts/*.sh
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Master regression guard
+        run: scripts/master-regression.sh
+
+      - name: Review regression tests
+        run: node --test tests/rendered-html.test.mjs
+
+      - name: Validate reader engines
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check public/reader-tools.js
+          node --check public/reader-ambience.js
+          node --check public/reader-studio.js
+          node --check public/reader-formats.js
+          node --check public/reader-mixer.js
+          node --check public/reader-smart-suite.js
+          node --check public/reader-master-fixes.js
+          node --check public/piper-worker.js
+
+      - name: Production build
+        run: npm run build
+
+      - name: Commit reviewed Master v31
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'Fix scrolling, Piper, PDF and PWA in Mafateeh Master v31'
+          git push origin HEAD:main
+
+      - name: Deploy Master v31 to Cloudflare
+        run: npx wrangler deploy --name mafateeh-al-tharwa
+
+      - name: Verify live Master v31
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE='https://mafateeh-al-tharwa.kosif199022.workers.dev'
+          for i in $(seq 1 12); do
+            VERSION=$(curl -fsSL "$BASE/master-version.json?check=$RANDOM" || true)
+            if echo "$VERSION" | grep -q '"version":"31.0.0"'; then break; fi
+            echo "Waiting for v31 propagation ($i/12)..."
+            sleep 5
+          done
+          echo "$VERSION" | grep -q '"version":"31.0.0"'
+          curl -fsSL "$BASE/reader.html?v=31&check=$RANDOM" | grep -q 'reader-master-fixes.js?v=31'
+          curl -fsSL "$BASE/piper-worker.js?v=31&check=$RANDOM" | grep -q '@mintplex-labs/piper-tts-web@1.0.4'
+          curl -fsSL "$BASE/sw.js?check=$RANDOM" | grep -q 'reader-master-fixes.js?v=31'
+          echo 'LIVE_VERIFY_OK v31'
