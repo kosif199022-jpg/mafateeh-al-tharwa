@@ -1,21 +1,22 @@
 const CACHE_NAME = "mafateeh-al-tharwa-v31";
 const RUNTIME_CACHE = "mafateeh-runtime-v31";
 const PIPER_RUNTIME_CACHE = "mafateeh-piper-runtime-v31";
-const OFFLINE_FALLBACK = "/reader.html?v=30";
+const OFFLINE_FALLBACK = "/reader.html?v=31";
 const OFFLINE_FILES = [
   OFFLINE_FALLBACK,
-  "/reader-tools.css?v=30",
-  "/reader-ambience.css?v=30",
-  "/reader-studio.css?v=30",
-  "/reader-mixer.css?v=30",
-  "/reader-smart-suite.css?v=30",
-  "/reader-formats.js?v=30",
-  "/reader-tools.js?v=30",
-  "/reader-ambience.js?v=30",
-  "/reader-studio.js?v=30",
-  "/reader-mixer.js?v=30",
-  "/reader-smart-suite.js?v=30",
-  "/piper-worker.js?v=30",
+  "/reader-tools.css?v=31",
+  "/reader-ambience.css?v=31",
+  "/reader-studio.css?v=31",
+  "/reader-mixer.css?v=31",
+  "/reader-smart-suite.css?v=31",
+  "/reader-formats.js?v=31",
+  "/reader-tools.js?v=31",
+  "/reader-ambience.js?v=31",
+  "/reader-studio.js?v=31",
+  "/reader-mixer.js?v=31",
+  "/reader-smart-suite.js?v=31",
+  "/reader-master-fixes.js?v=31",
+  "/piper-worker.js?v=31",
   "/backgrounds/ocean-dawn.webp",
   "/backgrounds/forest-mist.webp",
   "/backgrounds/desert-night.webp",
