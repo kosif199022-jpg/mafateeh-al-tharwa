@@ -1,0 +1,30 @@
+name: Package Full Source
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Prepare source package
+        run: |
+          mkdir -p package
+          rsync -a --exclude '.git' --exclude 'node_modules' --exclude '.next' --exclude 'dist' ./ package/mafateeh-al-tharwa-v33-full-source/
+      - name: Upload full source
+        uses: actions/upload-artifact@v4
+        with:
+          name: mafateeh-al-tharwa-v33-full-source
+          path: package/mafateeh-al-tharwa-v33-full-source
+          include-hidden-files: true
+          compression-level: 6
+          retention-days: 30
