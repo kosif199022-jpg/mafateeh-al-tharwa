@@ -24,17 +24,19 @@ jobs:
           node scripts/apply-modified-book.mjs
           node scripts/apply-v34-scroll-fixes.mjs
           node tests/scroll-v34-regression.test.mjs
+          node scripts/apply-v35-scroll-fixes.mjs
+          node tests/scroll-v35-regression.test.mjs
 
       - name: Prepare source package
         run: |
           mkdir -p package
-          rsync -a --exclude '.git' --exclude 'node_modules' --exclude '.next' --exclude 'dist' --exclude 'package' ./ package/mafateeh-al-tharwa-v34-full-source/
+          rsync -a --exclude '.git' --exclude 'node_modules' --exclude '.next' --exclude 'dist' --exclude 'package' ./ package/mafateeh-al-tharwa-v35-full-source/
 
       - name: Upload full source
         uses: actions/upload-artifact@v4
         with:
-          name: mafateeh-al-tharwa-v34-full-source
-          path: package/mafateeh-al-tharwa-v34-full-source
+          name: mafateeh-al-tharwa-v35-full-source
+          path: package/mafateeh-al-tharwa-v35-full-source
           include-hidden-files: true
           compression-level: 6
           retention-days: 30
