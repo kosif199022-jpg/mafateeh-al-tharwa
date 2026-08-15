@@ -44,6 +44,9 @@ jobs:
       - name: Apply Master v32 reader fixes
         run: node scripts/apply-v32-reader-fixes.mjs
 
+      - name: Apply Master v33 iOS fixes
+        run: node scripts/apply-v33-ios-fixes.mjs
+
       - name: Master regression guard
         run: scripts/master-regression.sh
 
@@ -88,6 +91,7 @@ jobs:
           curl -LfsS --max-redirs 5 --retry 3 -H 'Cache-Control: no-cache' "$LIVE_URL/manifest.webmanifest?cb=$cache_bust" -o /tmp/mafateeh-manifest.webmanifest
           curl -LfsS --max-redirs 5 --retry 3 -H 'Cache-Control: no-cache' "$LIVE_URL/reader-smart-suite.css?cb=$cache_bust" -o /tmp/mafateeh-smart.css
           curl -LfsS --max-redirs 5 --retry 3 -H 'Cache-Control: no-cache' "$LIVE_URL/reader-mixer.css?cb=$cache_bust" -o /tmp/mafateeh-mixer.css
+          curl -LfsS --max-redirs 5 --retry 3 -H 'Cache-Control: no-cache' "$LIVE_URL/reader-master-fixes.js?cb=$cache_bust" -o /tmp/mafateeh-master.js
 
           EXPECTED_MAJOR="$expected_major" node <<'NODE'
           const fs = require('fs');
@@ -99,6 +103,7 @@ jobs:
             ['PWA start URL versioned', '/tmp/mafateeh-manifest.webmanifest', `"start_url": "/reader.html?v=${major}"`],
             ['smart floating dock hidden', '/tmp/mafateeh-smart.css', '#smartHubDock{display:none!important}'],
             ['mixer floating dock hidden', '/tmp/mafateeh-mixer.css', '.mixer-dock{display:none!important}'],
+            ['iOS body touch lock removed', '/tmp/mafateeh-master.js', "b.style.overflow='hidden';"],
           ];
           let failed = false;
           for (const [label, file, needle] of checks) {
