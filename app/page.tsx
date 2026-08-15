@@ -3,8 +3,6 @@
 //
 // import { headers } from "next/headers";
 //
-// import { headers } from "next/headers";
-//
 // export default async function Home() {
 //   const requestHeaders = await headers();
 //   const email = requestHeaders.get("oai-authenticated-user-email");
@@ -22,5 +20,5 @@
 import { redirect } from "next/navigation";
 
 export default function Home() {
-  redirect("/reader.html?v=32");
+  redirect("/reader.html?v=33");
 }
