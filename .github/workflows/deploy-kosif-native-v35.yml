@@ -48,14 +48,19 @@ jobs:
           test -f src/worker.js
           test -f public/index.html
           test -f public/v36-ai-gate.js
+          test -f public/v36-standards-readiness.js
           test -f public/standards/index.html
           test -f public/standards/reader-pro-v36.js
           node --check src/worker.js
           node --check public/v36-ai-gate.js
           node --check public/v36-governance.js
+          node --check public/v36-standards-readiness.js
           node --check public/standards/reader-pro-v36.js
           node --check public/sw.js
           node --check public/standards/sw.js
+          grep -q 'IFRS 20' public/v36-standards-readiness.js
+          grep -q "VERIFIED_AS_OF='2026-08-17'" public/v36-standards-readiness.js
+          grep -q 'socpaUpdate2026' public/v36-standards-readiness.js
           node scripts/deep-audit-v36.mjs
           node - <<'NODE'
           const m=require('./RELEASE_MANIFEST_V36_1.json');
@@ -110,4 +115,9 @@ jobs:
           if(!b1||b1.chapters!==66||!b3||b3.chapters!==34||!b2||b2.chapters!==139) process.exit(1);
           console.log('live chapters',b1.chapters,b3.chapters,b2.chapters);
           NODE
+
+          curl -fsS -H 'Cache-Control: no-cache, no-store, max-age=0' "$LIVE_URL/v36-standards-readiness.js?cb=$cb" -o /tmp/readiness.js
+          grep -q 'IFRS 20' /tmp/readiness.js
+          grep -q "VERIFIED_AS_OF='2026-08-17'" /tmp/readiness.js
+          grep -q 'socpaUpdate2026' /tmp/readiness.js
           echo "LIVE_KOSIF_V36_1_OK $LIVE_URL"
