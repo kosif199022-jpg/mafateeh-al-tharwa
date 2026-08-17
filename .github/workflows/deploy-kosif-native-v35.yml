@@ -1,4 +1,4 @@
-name: Deploy Kosif v36.1 Live
+name: Deploy Kosif v36.3 Live
 
 on:
   push:
@@ -33,60 +33,44 @@ jobs:
           ref: main
           path: kosif
 
-      - name: Verify Cloudflare credentials
-        shell: bash
-        run: |
-          test -n "$CLOUDFLARE_API_TOKEN" || { echo '::error::CLOUDFLARE_API_TOKEN is missing in this repository.'; exit 2; }
-
-      - name: Validate Kosif v36.1.3 release source
+      - name: Validate Kosif v36.3 source
         shell: bash
         working-directory: kosif
         run: |
           set -euo pipefail
-          test -f RELEASE_MANIFEST_V36_1.json
+          test -n "$CLOUDFLARE_API_TOKEN" || { echo '::error::CLOUDFLARE_API_TOKEN is missing.'; exit 2; }
           test -f wrangler.toml
           test -f src/worker.js
-          test -f src/standards-mafateeh.js
-          test -f src/library-module.js
           test -f public/index.html
-          test -f public/v36.css
-          test -f public/v36-ai-gate.js
-          test -f public/v36-standards-readiness.js
-          test -f public/standards/index.html
-          test -f public/standards/reader-pro-v36.js
-          node --check src/worker.js
-          node --check src/standards-mafateeh.js
-          node --check src/library-module.js
-          node --check public/v36-ai-gate.js
-          node --check public/v36-governance.js
-          node --check public/v36-standards-readiness.js
-          node --check public/standards/reader-pro-v36.js
-          node --check public/sw.js
-          node --check public/standards/sw.js
-          grep -q "version:'36.1.2'" public/v36-ai-gate.js
-          grep -q 'grid-template-columns:repeat(6,minmax(0,1fr))' public/v36.css
-          grep -q 'grid-template-columns:repeat(12,minmax(0,1fr))' public/v36.css
-          grep -q '#kosif-bottom-nav{display:none' public/v36.css
-          grep -q "kosif-native-v36-1-3-app" public/sw.js
-          grep -q 'id="kosif-full-standards" href="/standards/"' public/index.html
-          ! grep -q 'https://kosif-standards-library.kosif199022.workers.dev/' public/index.html
-          grep -q "try{if(p==='/library/smart'||p==='/library/smart/'||p.startsWith('/library/files/'))return null;if(p==='/library/unlock'" src/standards-mafateeh.js
+          test -f public/v36-continuity.js
+          test -f public/v36-engagement.js
+          test -f scripts/verify-v36-3-runtime.cjs
+          npm run check
+          grep -q '"version": "36.3.0"' package.json
+          grep -q "version:'v36.3'" src/worker.js
+          grep -q '2026.08.17-v36.3-master-requirements' src/worker.js
+          grep -q "u.pathname==='/__version'" src/worker.js
+          grep -q "u.pathname==='/__asset-index'" src/worker.js
+          grep -q 'return nativeShell(req,env)' src/worker.js
+          grep -q 'dataset.kosifCompanyState' public/v36-continuity.js
+          ! grep -q 'document.documentElement.dataset.kosifActiveCompany' public/v36-continuity.js
+          grep -q '90% إلى 200%' public/index.html
+          grep -q 'kosif-native-v36-3-app' public/sw.js
+          grep -q 'kosif-native-v36-3-standards' public/standards/sw.js
           grep -q 'IFRS 20' public/v36-standards-readiness.js
           grep -q "VERIFIED_AS_OF='2026-08-17'" public/v36-standards-readiness.js
-          grep -q 'socpaUpdate2026' public/v36-standards-readiness.js
-          node scripts/deep-audit-v36.mjs
-          node - <<'NODE'
-          const m=require('./RELEASE_MANIFEST_V36_1.json');
-          if(!String(m.release).includes('v36.1')) throw new Error('Not a v36.1 release');
-          if(m.aiGate?.mode!=='owner-password + per-provider tested-key verification') throw new Error('AI gate manifest mismatch');
-          console.log(m.release, m.aiGate.mode);
-          NODE
+          echo "SOURCE_COMMIT=$(git rev-parse HEAD)"
 
-      - name: Deploy Kosif v36.1.3 to live Worker
+      - name: Deploy Kosif v36.3 to live Worker
+        shell: bash
         working-directory: kosif
-        run: npx --yes wrangler@4 deploy --name mahmoud-eldesouky
+        run: |
+          set -o pipefail
+          npx --yes wrangler@4 deploy --name mahmoud-eldesouky 2>&1 | tee /tmp/kosif-deploy.log
+          echo '--- deployment identity ---'
+          grep -Ei 'Version ID|Current Version ID|Uploaded mahmoud-eldesouky|Deployed mahmoud-eldesouky' /tmp/kosif-deploy.log || true
 
-      - name: Verify live deployment and both libraries
+      - name: Verify live v36.3 root, security and libraries
         shell: bash
         run: |
           set -euo pipefail
@@ -94,37 +78,32 @@ jobs:
           for attempt in $(seq 1 24); do
             cb="${GITHUB_RUN_ID}-${attempt}-$(date +%s%N)"
             hcode=$(curl -sS -H 'Cache-Control: no-cache, no-store, max-age=0' "$LIVE_URL/__health?cb=$cb" -o /tmp/health.json -w '%{http_code}' || true)
-            rcode=$(curl -sS -D /tmp/headers.txt -H 'Cache-Control: no-cache, no-store, max-age=0' "$LIVE_URL/?cb=$cb" -o /tmp/index.html -w '%{http_code}' || true)
-            tr -d '\r' < /tmp/headers.txt > /tmp/headers.clean || true
-            release=$(awk 'BEGIN{IGNORECASE=1} /^x-kosif-release:/{sub(/^x-kosif-release:[[:space:]]*/,"");print;exit}' /tmp/headers.clean || true)
-            echo "attempt=$attempt health=$hcode root=$rcode release=$release"
-            if [ "$hcode" = 200 ] && [ "$rcode" = 200 ] \
-              && grep -q '"version":"v36.1"' /tmp/health.json \
-              && grep -q '"aiGate":"owner-password+verified-key"' /tmp/health.json \
-              && [ "$release" = 'native-v36-1-deep-audit' ] \
-              && grep -q 'KOSIF_CLIENT_V36_1_2026_08_17' /tmp/index.html \
-              && grep -q 'id="kosif-full-standards" href="/standards/"' /tmp/index.html \
+            vcode=$(curl -sS -H 'Cache-Control: no-cache, no-store, max-age=0' "$LIVE_URL/__version?cb=$cb" -o /tmp/version.json -w '%{http_code}' || true)
+            rcode=$(curl -sS -D /tmp/root.headers -H 'Cache-Control: no-cache, no-store, max-age=0' "$LIVE_URL/?cb=$cb" -o /tmp/index.html -w '%{http_code}' || true)
+            tr -d '\r' < /tmp/root.headers > /tmp/root.clean || true
+            release=$(awk 'BEGIN{IGNORECASE=1} /^x-kosif-release:/{sub(/^x-kosif-release:[[:space:]]*/,"");print;exit}' /tmp/root.clean || true)
+            echo "attempt=$attempt health=$hcode version=$vcode root=$rcode release=$release"
+            if [ "$hcode" = 200 ] && [ "$vcode" = 200 ] && [ "$rcode" = 200 ] \
+              && grep -q '"version":"v36.3"' /tmp/health.json \
+              && grep -q '"buildId":"2026.08.17-v36.3-master-requirements"' /tmp/health.json \
+              && grep -q '"version":"v36.3"' /tmp/version.json \
+              && grep -q '"appCache":"kosif-native-v36-3-app"' /tmp/version.json \
+              && grep -q '"standardsCache":"kosif-native-v36-3-standards"' /tmp/version.json \
+              && grep -q '"max":200' /tmp/version.json \
+              && [ "$release" = 'native-v36-3-master-requirements' ] \
+              && grep -q 'id="kosif-boot"' /tmp/index.html \
+              && grep -q '/v36-continuity.js?v=36.3' /tmp/index.html \
+              && grep -q '90% إلى 200%' /tmp/index.html \
               && ! grep -q 'https://kosif-standards-library.kosif199022.workers.dev/' /tmp/index.html \
               && ! grep -q 'AI Active ·' /tmp/index.html; then ok=1; break; fi
-            sleep 5
+            sleep 4
           done
-          [ "$ok" -eq 1 ] || { echo '::error::Live v36.1.3 root did not fully propagate.'; exit 1; }
+          [ "$ok" -eq 1 ] || { echo '::error::Live v36.3 root did not fully propagate.'; cat /tmp/health.json /tmp/version.json; exit 1; }
 
-          uiok=0
-          for attempt in $(seq 1 20); do
-            cb="${GITHUB_RUN_ID}-ui-${attempt}-$(date +%s%N)"
-            gcode=$(curl -sS -H 'Cache-Control: no-cache, no-store, max-age=0' "$LIVE_URL/v36-ai-gate.js?cb=$cb" -o /tmp/gate.js -w '%{http_code}' || true)
-            ccode=$(curl -sS -H 'Cache-Control: no-cache, no-store, max-age=0' "$LIVE_URL/v36.css?cb=$cb" -o /tmp/v36.css -w '%{http_code}' || true)
-            swcode=$(curl -sS -H 'Cache-Control: no-cache, no-store, max-age=0' "$LIVE_URL/sw.js?cb=$cb" -o /tmp/sw.js -w '%{http_code}' || true)
-            gv=$(grep -c "version:'36.1.2'" /tmp/gate.js 2>/dev/null || true)
-            c6=$(grep -c 'grid-template-columns:repeat(6,minmax(0,1fr))' /tmp/v36.css 2>/dev/null || true)
-            c12=$(grep -c 'grid-template-columns:repeat(12,minmax(0,1fr))' /tmp/v36.css 2>/dev/null || true)
-            sw13=$(grep -c 'kosif-native-v36-1-3-app' /tmp/sw.js 2>/dev/null || true)
-            echo "ui-attempt=$attempt gate=$gcode css=$ccode sw=$swcode version=$gv grid6=$c6 grid12=$c12 sw13=$sw13"
-            if [ "$gcode" = 200 ] && [ "$ccode" = 200 ] && [ "$swcode" = 200 ] && [ "$gv" -gt 0 ] && [ "$c6" -gt 0 ] && [ "$c12" -gt 0 ] && [ "$sw13" -gt 0 ]; then uiok=1; break; fi
-            sleep 5
-          done
-          [ "$uiok" -eq 1 ] || { echo '::error::v36.1.3 UI/service-worker did not propagate.'; exit 1; }
+          cb="${GITHUB_RUN_ID}-asset-$(date +%s%N)"
+          curl -fsS -H 'Cache-Control: no-cache, no-store, max-age=0' "$LIVE_URL/__asset-index?cb=$cb" -o /tmp/asset.json
+          grep -q '"hasKosifBoot":true' /tmp/asset.json
+          grep -q '"hasV36Continuity":true' /tmp/asset.json
 
           locked=$(curl -sS -o /tmp/locked.json -w '%{http_code}' -X POST -H 'content-type: application/json' --data '{"provider":"gemini","model":"gemini-3.6-flash","key":"dummy","prompt":"x"}' "$LIVE_URL/api/kosif/ai")
           [ "$locked" = 401 ]
@@ -132,38 +111,44 @@ jobs:
 
           cb="${GITHUB_RUN_ID}-std-$(date +%s%N)"
           stdcode=$(curl -sS -H 'Cache-Control: no-cache, no-store, max-age=0' "$LIVE_URL/standards/?cb=$cb" -o /tmp/standards.html -w '%{http_code}')
-          echo "standards_http=$stdcode"
           [ "$stdcode" = 200 ]
-          grep -q 'reader-pro-v36.js?v=36.1' /tmp/standards.html
-          chcode=$(curl -sS -H 'Cache-Control: no-cache, no-store, max-age=0' "$LIVE_URL/standards/data/b1/1.json?cb=$cb" -o /tmp/chapter.json -w '%{http_code}')
-          [ "$chcode" = 200 ]
-          node -e "const x=require('/tmp/chapter.json');if(!x||!x.title)process.exit(1);console.log('live standard chapter',x.title)"
+          grep -q 'reader-pro-v36.js' /tmp/standards.html
+          for path in b1/1 b3/34 b2/139 b4/46; do
+            code=$(curl -sS -H 'Cache-Control: no-cache, no-store, max-age=0' "$LIVE_URL/standards/data/$path.json?cb=$cb" -o /tmp/chapter.json -w '%{http_code}')
+            [ "$code" = 200 ] || { echo "chapter failed: $path -> $code"; exit 1; }
+          done
           curl -fsS -H 'Cache-Control: no-cache, no-store, max-age=0' "$LIVE_URL/standards/data/library.json?cb=$cb" -o /tmp/library.json
           node - <<'NODE'
           const x=require('/tmp/library.json');
-          const b1=x.find(v=>v.id==='b1'),b3=x.find(v=>v.id==='b3'),b2=x.find(v=>v.id==='b2');
-          if(!b1||b1.chapters!==66||!b3||b3.chapters!==34||!b2||b2.chapters!==139) process.exit(1);
-          console.log('live standards chapters',b1.chapters,b3.chapters,b2.chapters);
+          const want={b1:66,b3:34,b2:139,b4:46};
+          for(const [id,n] of Object.entries(want)){const b=x.find(v=>v.id===id);if(!b||b.chapters!==n)throw new Error(id+' chapter mismatch')}
+          console.log('live standards inventory',want)
           NODE
 
           smartok=0
-          for attempt in $(seq 1 24); do
+          for attempt in $(seq 1 20); do
             cb="${GITHUB_RUN_ID}-smart-${attempt}-$(date +%s%N)"
             scode=$(curl -sS -D /tmp/smart.headers -H 'Cache-Control: no-cache, no-store, max-age=0' "$LIVE_URL/library/smart?cb=$cb" -o /tmp/smart.html -w '%{http_code}' || true)
             tr -d '\r' < /tmp/smart.headers > /tmp/smart.clean || true
             marker=$(awk 'BEGIN{IGNORECASE=1} /^x-kosif-library:/{sub(/^x-kosif-library:[[:space:]]*/,"");print;exit}' /tmp/smart.clean || true)
             echo "smart-attempt=$attempt http=$scode marker=$marker bytes=$(wc -c </tmp/smart.html 2>/dev/null || echo 0)"
             if [ "$scode" = 200 ] && [ "$marker" = 'smart-books' ] && grep -Eqi 'مكتبة|كتاب|library' /tmp/smart.html; then smartok=1; break; fi
-            sleep 5
+            sleep 4
           done
-          [ "$smartok" -eq 1 ] || { echo '::error::Smart books library is still unavailable on live Worker.'; cat /tmp/smart.html; exit 1; }
+          [ "$smartok" -eq 1 ] || { echo '::error::Smart Library is unavailable live.'; exit 1; }
 
           apicode=$(curl -sS -H 'Cache-Control: no-cache, no-store, max-age=0' "$LIVE_URL/api/library?cb=$cb" -o /tmp/library-api.json -w '%{http_code}' || true)
-          echo "library_api_http=$apicode body=$(head -c 300 /tmp/library-api.json)"
           [ "$apicode" = 200 ]
+          node -e "const x=require('/tmp/library-api.json');if(!Array.isArray(x.books))process.exit(1);console.log('live smart books',x.books.length,x.books.map(b=>b.name))"
 
+          curl -fsS -H 'Cache-Control: no-cache, no-store, max-age=0' "$LIVE_URL/v36-ai-gate.js?cb=$cb" -o /tmp/gate.js
+          grep -q "version:'36.3.0'" /tmp/gate.js
+          curl -fsS -H 'Cache-Control: no-cache, no-store, max-age=0' "$LIVE_URL/v36-continuity.js?cb=$cb" -o /tmp/continuity.js
+          grep -q 'dataset.kosifCompanyState' /tmp/continuity.js
+          ! grep -q 'document.documentElement.dataset.kosifActiveCompany' /tmp/continuity.js
           curl -fsS -H 'Cache-Control: no-cache, no-store, max-age=0' "$LIVE_URL/v36-standards-readiness.js?cb=$cb" -o /tmp/readiness.js
           grep -q 'IFRS 20' /tmp/readiness.js
           grep -q "VERIFIED_AS_OF='2026-08-17'" /tmp/readiness.js
           grep -q 'socpaUpdate2026' /tmp/readiness.js
-          echo "LIVE_KOSIF_V36_1_3_LIBRARIES_OK $LIVE_URL"
+
+          echo "LIVE_KOSIF_V36_3_OK $LIVE_URL"
