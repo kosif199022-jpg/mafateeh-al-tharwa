@@ -60,16 +60,25 @@ jobs:
         working-directory: kosif
         run: npx --yes wrangler@4 deploy --name mahmoud-eldesouky
 
+      - name: Wait for owner-password Worker propagation
+        shell: bash
+        run: |
+          set -euo pipefail
+          ok=0
+          for attempt in $(seq 1 20); do
+            cb="${GITHUB_RUN_ID}-${attempt}-$(date +%s%N)"
+            code=$(curl -sS --max-time 15 -H 'Cache-Control: no-cache, no-store' "$LIVE_URL/__health?cb=$cb" -o /tmp/health.json -w '%{http_code}' || true)
+            echo "attempt=$attempt HTTP=$code $(cat /tmp/health.json 2>/dev/null || true)"
+            if [ "$code" = 200 ] && grep -q '"version":"v36"' /tmp/health.json && grep -q '"aiGate":"owner-password"' /tmp/health.json; then ok=1; break; fi
+            sleep 4
+          done
+          [ "$ok" -eq 1 ] || { echo '::error::Owner-password Worker did not propagate.'; exit 1; }
+
       - name: Verify live AI is fail-closed
         shell: bash
         run: |
           set -euo pipefail
-          cb="${GITHUB_RUN_ID}-$(date +%s)"
-          curl -fsS -H 'Cache-Control: no-cache, no-store' "$LIVE_URL/__health?cb=$cb" -o /tmp/health.json
-          cat /tmp/health.json
-          grep -q '"version":"v36"' /tmp/health.json
-          grep -q '"aiGate":"owner-password"' /tmp/health.json
-
+          cb="${GITHUB_RUN_ID}-final-$(date +%s%N)"
           curl -fsS -H 'Cache-Control: no-cache, no-store' "$LIVE_URL/?cb=$cb" -o /tmp/index.html
           grep -q '/v36-ai-gate.js?v=36.1' /tmp/index.html
           curl -fsS -H 'Cache-Control: no-cache, no-store' "$LIVE_URL/v36-ai-gate.js?cb=$cb" -o /tmp/gate.js
