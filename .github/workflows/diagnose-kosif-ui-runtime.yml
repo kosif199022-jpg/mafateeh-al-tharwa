@@ -1,0 +1,66 @@
+name: Diagnose Kosif v35 Browser Runtime
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout Kosif source
+        uses: actions/checkout@v4
+        with:
+          repository: kosif199022-jpg/mahmoud1990
+          ref: main
+      - name: Locate splash failure code
+        shell: bash
+        run: |
+          set +e
+          echo '--- splash strings ---'
+          grep -n -C 8 -E 'تعذر تشغيل الواجهة|إعادة المحاولة|splash|boot|startup' public/index.html | head -n 240 || true
+      - name: Install browser probe
+        run: |
+          npm init -y >/dev/null 2>&1
+          npm install --no-save playwright@1.54.2 >/dev/null
+          npx playwright install chromium >/dev/null
+      - name: Probe live runtime
+        shell: bash
+        run: |
+          cat > /tmp/probe.cjs <<'NODE'
+          const { chromium } = require('playwright');
+          (async()=>{
+            const browser=await chromium.launch({headless:true});
+            const page=await browser.newPage({viewport:{width:390,height:844},isMobile:true,hasTouch:true});
+            const events=[];
+            page.on('console',m=>events.push(`CONSOLE ${m.type()}: ${m.text()}`));
+            page.on('pageerror',e=>events.push(`PAGEERROR: ${e.stack||e.message}`));
+            page.on('requestfailed',r=>events.push(`REQFAIL: ${r.url()} :: ${r.failure()?.errorText}`));
+            page.on('response',r=>{if(r.status()>=400)events.push(`HTTP${r.status()}: ${r.url()}`)});
+            const url='https://mahmoud-eldesouky.kosif199022.workers.dev/?cb='+Date.now();
+            const resp=await page.goto(url,{waitUntil:'domcontentloaded',timeout:60000});
+            console.log('NAV',resp?.status(),url);
+            await page.waitForTimeout(10000);
+            console.log('TITLE',await page.title());
+            console.log('URL',page.url());
+            console.log('BODY', (await page.locator('body').innerText()).slice(0,4000));
+            console.log('EVENTS_START');
+            for(const e of events) console.log(e);
+            console.log('EVENTS_END');
+            await page.screenshot({path:'/tmp/kosif-runtime.png',fullPage:true});
+            await browser.close();
+          })().catch(e=>{console.error('PROBE_FATAL',e.stack||e);process.exit(1)});
+          NODE
+          node /tmp/probe.cjs
+      - name: Upload screenshot
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kosif-runtime-diagnostic
+          path: /tmp/kosif-runtime.png
+          if-no-files-found: ignore
