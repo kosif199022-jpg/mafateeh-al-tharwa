@@ -1,0 +1,72 @@
+name: Verify Kosif v36.3 History Restoration Live
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/verify-kosif-history-restoration-live.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      LIVE_URL: https://mahmoud-eldesouky.kosif199022.workers.dev
+    steps:
+      - name: Verify live identity and restored capabilities
+        shell: bash
+        run: |
+          set -euo pipefail
+          cb="${GITHUB_RUN_ID}-$(date +%s%N)"
+          curl -fsS -D /tmp/root.h -H 'Cache-Control: no-cache, no-store, max-age=0' "$LIVE_URL/?cb=$cb" -o /tmp/root.html
+          curl -fsS -H 'Cache-Control: no-cache, no-store, max-age=0' "$LIVE_URL/__health?cb=$cb" -o /tmp/health.json
+          curl -fsS -H 'Cache-Control: no-cache, no-store, max-age=0' "$LIVE_URL/__version?cb=$cb" -o /tmp/version.json
+          grep -qi '^x-kosif-release: native-v36-3-master-requirements-zai' /tmp/root.h
+          grep -q '"version":"v36.3"' /tmp/health.json
+          grep -q '"buildId":"2026.08.17-v36.3-master-requirements"' /tmp/health.json
+          grep -q '"aiProviders":\["gemini","openai","anthropic","zai"\]' /tmp/health.json
+          grep -q '"appCache":"kosif-native-v36-3-app"' /tmp/version.json
+          grep -q '"standardsCache":"kosif-native-v36-3-standards"' /tmp/version.json
+          grep -q '/v36-voice-guide.js?v=36.3-history1' /tmp/root.html
+          grep -q '/v36-history-restore.js?v=36.3-history1' /tmp/root.html
+          grep -q '90% إلى 200%' /tmp/root.html
+
+          curl -fsS -H 'Cache-Control: no-cache, no-store, max-age=0' "$LIVE_URL/v36-voice-guide.js?cb=$cb" -o /tmp/voice.js
+          grep -q 'ابدأ منين' /tmp/voice.js
+          grep -q 'SpeechSynthesisUtterance' /tmp/voice.js
+          grep -q 'SpeechRecognition' /tmp/voice.js
+
+          curl -fsS -H 'Cache-Control: no-cache, no-store, max-age=0' "$LIVE_URL/v36-history-restore.js?cb=$cb" -o /tmp/history.js
+          grep -q "en:'English'" /tmp/history.js
+          grep -q "it:'Italiano'" /tmp/history.js
+          grep -q "hi:'हिन्दी'" /tmp/history.js
+          grep -q 'IAS 33' /tmp/history.js
+          grep -q 'IFRS 8' /tmp/history.js
+          grep -q 'ISA 701' /tmp/history.js
+          grep -q 'smeConflict' /tmp/history.js
+
+          curl -fsS -H 'Cache-Control: no-cache, no-store, max-age=0' "$LIVE_URL/v36-reviewer-media.js?cb=$cb" -o /tmp/media.js
+          grep -q 'MediaRecorder' /tmp/media.js
+          grep -q 'localOnly:true' /tmp/media.js
+          grep -q 'rawSentToAI:false' /tmp/media.js
+
+          locked=$(curl -sS -o /tmp/locked.json -w '%{http_code}' -X POST -H 'content-type: application/json' --data '{"provider":"gemini","model":"gemini-3.6-flash","key":"dummy","prompt":"x"}' "$LIVE_URL/api/kosif/ai")
+          test "$locked" = 401
+          grep -q 'AI_LOCKED' /tmp/locked.json
+
+          curl -fsS -H 'Cache-Control: no-cache, no-store, max-age=0' "$LIVE_URL/standards/?cb=$cb" -o /tmp/std.html
+          grep -q 'reader-pro-v36.js' /tmp/std.html
+          for path in b1/1 b3/34 b2/139 b4/46; do
+            curl -fsS -H 'Cache-Control: no-cache, no-store, max-age=0' "$LIVE_URL/standards/data/$path.json?cb=$cb" -o /tmp/ch.json
+          done
+
+          scode=$(curl -sS -D /tmp/smart.h -H 'Cache-Control: no-cache, no-store, max-age=0' "$LIVE_URL/library/smart?cb=$cb" -o /tmp/smart.html -w '%{http_code}')
+          test "$scode" = 200
+          grep -qi '^x-kosif-library: smart-books' /tmp/smart.h
+          grep -Eqi 'مكتبة|كتاب|library' /tmp/smart.html
+
+          echo 'LIVE_KOSIF_V36_3_HISTORY_RESTORATION_OK'
