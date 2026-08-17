@@ -24,6 +24,15 @@ jobs:
           repository: kosif199022-jpg/mahmoud1990
           ref: main
           path: kosif
+      - name: Verify latest source includes Z.ai and secret-only gate
+        working-directory: kosif
+        run: |
+          set -euo pipefail
+          echo "SOURCE_COMMIT=$(git rev-parse HEAD)"
+          ! grep -q '^AI_GATE_HASH' wrangler.toml
+          grep -q 'KOSIF_AI_GATE_HASH' src/worker.js
+          grep -q 'Z.ai / GLM' public/v36-zai.js
+          grep -q '/v36-zai.js' public/sw.js
       - name: Use runner Chrome
         working-directory: kosif
         run: |
@@ -35,6 +44,18 @@ jobs:
           KOSIF_TEST_URL: https://mahmoud-eldesouky.kosif199022.workers.dev
           PW_CHANNEL: chrome
         run: node scripts/verify-v36-3-runtime.cjs
+      - name: Verify Z.ai live asset and AI fail-closed gate
+        working-directory: kosif
+        run: |
+          set -euo pipefail
+          BASE='https://mahmoud-eldesouky.kosif199022.workers.dev'
+          cb="${GITHUB_RUN_ID}-$(date +%s%N)"
+          curl -fsS "$BASE/v36-zai.js?cb=$cb" -o /tmp/zai.js
+          grep -q 'Z.ai / GLM' /tmp/zai.js
+          code=$(curl -sS -o /tmp/ai.json -w '%{http_code}' -X POST -H 'content-type: application/json' --data '{"provider":"zai","model":"glm-5.1","key":"dummy","prompt":"x"}' "$BASE/api/kosif/ai")
+          [ "$code" = 401 ]
+          grep -q 'AI_LOCKED' /tmp/ai.json
+          echo 'KOSIF_V36_3_ZAI_LIVE_OK'
       - name: Upload live screenshot
         if: always()
         uses: actions/upload-artifact@v4
