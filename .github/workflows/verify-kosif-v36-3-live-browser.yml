@@ -1,0 +1,44 @@
+name: Verify Kosif v36.3 Live Browser
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/verify-kosif-v36-3-live-browser.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: verify-kosif-v36-3-live-browser
+  cancel-in-progress: true
+
+jobs:
+  live:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: kosif199022-jpg/mahmoud1990
+          ref: main
+          path: kosif
+      - name: Use runner Chrome
+        working-directory: kosif
+        run: |
+          command -v google-chrome || command -v google-chrome-stable || exit 1
+          npm install --no-save --package-lock=false playwright@1.54.2 >/dev/null
+      - name: Live mobile and desktop acceptance
+        working-directory: kosif
+        env:
+          KOSIF_TEST_URL: https://mahmoud-eldesouky.kosif199022.workers.dev
+          PW_CHANNEL: chrome
+        run: node scripts/verify-v36-3-runtime.cjs
+      - name: Upload live screenshot
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kosif-v36-3-live-browser
+          path: kosif/kosif-v36-3-mobile.png
+          if-no-files-found: ignore
