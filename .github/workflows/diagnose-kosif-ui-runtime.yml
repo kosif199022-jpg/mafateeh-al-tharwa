@@ -32,7 +32,7 @@ jobs:
       - name: Probe live runtime
         shell: bash
         run: |
-          cat > /tmp/probe.cjs <<'NODE'
+          cat > probe.cjs <<'NODE'
           const { chromium } = require('playwright');
           (async()=>{
             const browser=await chromium.launch({headless:true});
@@ -48,19 +48,22 @@ jobs:
             await page.waitForTimeout(10000);
             console.log('TITLE',await page.title());
             console.log('URL',page.url());
+            console.log('BOOT', await page.locator('#kosif-boot').count() ? await page.locator('#kosif-boot').getAttribute('class') : 'missing');
+            console.log('BOOT_ERROR', await page.locator('#kosif-boot').count() ? await page.locator('#kosif-boot').getAttribute('data-error') : 'missing');
+            console.log('READY', await page.locator('body').getAttribute('class'));
             console.log('BODY', (await page.locator('body').innerText()).slice(0,4000));
             console.log('EVENTS_START');
             for(const e of events) console.log(e);
             console.log('EVENTS_END');
-            await page.screenshot({path:'/tmp/kosif-runtime.png',fullPage:true});
+            await page.screenshot({path:'kosif-runtime.png',fullPage:true});
             await browser.close();
           })().catch(e=>{console.error('PROBE_FATAL',e.stack||e);process.exit(1)});
           NODE
-          node /tmp/probe.cjs
+          node probe.cjs
       - name: Upload screenshot
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: kosif-runtime-diagnostic
-          path: /tmp/kosif-runtime.png
+          path: kosif-runtime.png
           if-no-files-found: ignore
