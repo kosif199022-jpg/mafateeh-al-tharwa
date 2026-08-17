@@ -28,7 +28,7 @@ jobs:
             rcode=$(curl -sS -D /tmp/root.headers -H 'Cache-Control: no-cache, no-store, max-age=0' "$LIVE_URL/?cb=$cb" -o /tmp/root.html -w '%{http_code}' || true)
             tr -d '\r' < /tmp/root.headers > /tmp/root.clean || true
             release=$(awk 'BEGIN{IGNORECASE=1} /^x-kosif-release:/{sub(/^x-kosif-release:[[:space:]]*/,"");print;exit}' /tmp/root.clean || true)
-            echo "attempt=$attempt health=$hcode root=$rcode release=$release healthBody=$(cat /tmp/health.json 2>/dev/null || true)"
+            echo "root-attempt=$attempt health=$hcode root=$rcode release=$release healthBody=$(cat /tmp/health.json 2>/dev/null || true)"
             if [ "$hcode" = 200 ] && [ "$rcode" = 200 ] \
               && grep -q '"version":"v36.1"' /tmp/health.json \
               && grep -q '"aiGate":"owner-password+verified-key"' /tmp/health.json \
@@ -41,13 +41,26 @@ jobs:
           done
           [ "$passed" -eq 1 ] || { echo '::error::v36.1 did not fully propagate to root + health'; exit 1; }
 
+          freshness=0
+          for attempt in $(seq 1 20); do
+            cb="${GITHUB_RUN_ID}-fresh-${attempt}-$(date +%s%N)"
+            code=$(curl -sS -H 'Cache-Control: no-cache, no-store, max-age=0' "$LIVE_URL/v36-standards-readiness.js?cb=$cb" -o /tmp/readiness.js -w '%{http_code}' || true)
+            has20=$(grep -c 'IFRS 20' /tmp/readiness.js 2>/dev/null || true)
+            hasdate=$(grep -c "VERIFIED_AS_OF='2026-08-17'" /tmp/readiness.js 2>/dev/null || true)
+            hassocpa=$(grep -c 'socpaUpdate2026' /tmp/readiness.js 2>/dev/null || true)
+            echo "freshness-attempt=$attempt http=$code IFRS20=$has20 date=$hasdate socpa2026=$hassocpa bytes=$(wc -c </tmp/readiness.js 2>/dev/null || echo 0)"
+            if [ "$code" = 200 ] && [ "$has20" -gt 0 ] && [ "$hasdate" -gt 0 ] && [ "$hassocpa" -gt 0 ]; then freshness=1; break; fi
+            sleep 5
+          done
+          [ "$freshness" -eq 1 ] || { echo '::error::IFRS 20/source-freshness asset did not propagate'; exit 1; }
+
           cb="${GITHUB_RUN_ID}-std-$(date +%s%N)"
           curl -fsS -H 'Cache-Control: no-cache, no-store, max-age=0' "$LIVE_URL/standards/?cb=$cb" -o /tmp/standards.html
           grep -q 'reader-pro-v36.js?v=36.1' /tmp/standards.html
           curl -fsS -H 'Cache-Control: no-cache, no-store, max-age=0' "$LIVE_URL/standards/data/library.json?cb=$cb" -o /tmp/library.json
           node - <<'NODE'
           const x=require('/tmp/library.json');
-          const b1=x.find(v=>v.id==='b1'), b3=x.find(v=>v.id==='b3'), b2=x.find(v=>v.id==='b2');
+          const b1=x.find(v=>v.id==='b1'),b3=x.find(v=>v.id==='b3'),b2=x.find(v=>v.id==='b2');
           if(!b1||b1.chapters!==66) throw Error('b1 metadata mismatch');
           if(!b3||b3.chapters!==34) throw Error('b3 metadata mismatch');
           if(!b2||b2.chapters!==139) throw Error('b2 metadata mismatch');
@@ -69,4 +82,4 @@ jobs:
           [ "$testlocked" = 401 ]
           grep -q 'AI_LOCKED' /tmp/testlocked.json
 
-          echo 'LIVE_KOSIF_V36_1_PROPAGATED_AND_LOCKED_OK'
+          echo 'LIVE_KOSIF_V36_1_IFRS20_PROPAGATED_AND_LOCKED_OK'
