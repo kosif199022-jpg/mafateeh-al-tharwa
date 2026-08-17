@@ -38,16 +38,25 @@ jobs:
           npm run check
           echo "SOURCE_COMMIT=$(git rev-parse HEAD)"
           grep -q "version:'v36.3'" src/worker.js
+          grep -q 'KOSIF_AI_GATE_HASH' src/worker.js
           grep -q '90% إلى 200%' public/index.html
           grep -q 'kosif-native-v36-3-app' public/sw.js
-      - name: Move AI gate verifier into Cloudflare secret
+      - name: Create dedicated Cloudflare secret and remove legacy var from deploy config
         working-directory: kosif
         shell: bash
         run: |
           set -euo pipefail
           HASH=$(awk -F'"' '/^AI_GATE_HASH[[:space:]]*=[[:space:]]*"/{print $2;exit}' wrangler.toml)
-          if [ -n "$HASH" ]; then
-            python - <<'PY'
+          if [ -z "$HASH" ]; then
+            echo '::error::Legacy verifier is no longer in source; cannot seed the new secret in this migration run.'
+            exit 2
+          fi
+          if ! printf '%s' "$HASH" | npx --yes wrangler@4 secret put KOSIF_AI_GATE_HASH --name mahmoud-eldesouky >/tmp/secret-put.log 2>&1; then
+            cat /tmp/secret-put.log
+            exit 1
+          fi
+          echo 'KOSIF_AI_GATE_HASH secret binding stored in Cloudflare.'
+          python - <<'PY'
           from pathlib import Path
           p=Path('wrangler.toml')
           lines=p.read_text().splitlines()
@@ -65,16 +74,8 @@ jobs:
               out.append(lines[i]); i+=1
           p.write_text('\n'.join(out).rstrip()+'\n')
           PY
-            ! grep -q '^AI_GATE_HASH' wrangler.toml
-            if ! printf '%s' "$HASH" | npx --yes wrangler@4 secret put AI_GATE_HASH --name mahmoud-eldesouky >/tmp/secret-put.log 2>&1; then
-              cat /tmp/secret-put.log
-              exit 1
-            fi
-            echo 'AI_GATE_HASH secret binding stored in Cloudflare.'
-          else
-            echo 'Source has no plaintext AI_GATE_HASH; using the existing Cloudflare secret binding.'
-          fi
-      - name: Deploy latest main with secret-only AI gate
+          ! grep -q '^AI_GATE_HASH' wrangler.toml
+      - name: Deploy latest main with dedicated secret-only AI gate
         working-directory: kosif
         shell: bash
         run: |
@@ -98,6 +99,9 @@ jobs:
           code=$(curl -sS -o /tmp/locked.json -w '%{http_code}' -X POST -H 'content-type: application/json' --data '{"provider":"gemini","model":"gemini-3.6-flash","key":"dummy","prompt":"x"}' "$LIVE_URL/api/kosif/ai")
           [ "$code" = 401 ]
           grep -q 'AI_LOCKED' /tmp/locked.json
+          bad=$(curl -sS -o /tmp/bad-login.json -w '%{http_code}' -X POST -H 'content-type: application/json' --data '{"password":"__kosif_invalid_probe__"}' "$LIVE_URL/api/kosif/auth/login")
+          [ "$bad" = 401 ] || [ "$bad" = 429 ]
+          ! grep -q 'not configured' /tmp/bad-login.json
           std=$(curl -sS -o /tmp/std.html -w '%{http_code}' "$LIVE_URL/standards/?cb=$cb")
           smart=$(curl -sS -D /tmp/smart.h -o /tmp/smart.html -w '%{http_code}' "$LIVE_URL/library/smart?cb=$cb")
           [ "$std" = 200 ] && [ "$smart" = 200 ]
