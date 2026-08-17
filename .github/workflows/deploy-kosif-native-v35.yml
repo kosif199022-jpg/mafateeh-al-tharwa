@@ -101,7 +101,7 @@ jobs:
               && grep -q '"appCache":"kosif-native-v36-3-app"' /tmp/version.json \
               && grep -q '"standardsCache":"kosif-native-v36-3-standards"' /tmp/version.json \
               && grep -q '"max":200' /tmp/version.json \
-              && [ "$release" = 'native-v36-3-master-requirements' ] \
+              && [ "$release" = 'native-v36-3-master-requirements-zai' ] \
               && grep -q 'id="kosif-boot"' /tmp/index.html \
               && grep -q '/v36-continuity.js?v=36.3' /tmp/index.html \
               && grep -q '/v36-voice-guide.js?v=36.3-history1' /tmp/index.html \
