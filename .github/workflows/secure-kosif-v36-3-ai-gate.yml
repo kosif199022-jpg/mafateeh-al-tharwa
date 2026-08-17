@@ -1,0 +1,97 @@
+name: Secure and Deploy Kosif v36.3 AI Gate
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/secure-kosif-v36-3-ai-gate.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: secure-deploy-kosif-v36-3
+  cancel-in-progress: false
+
+jobs:
+  secure-deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      CLOUDFLARE_ACCOUNT_ID: 9ff3d8494afab356ecbf95a2a231a6b5
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      LIVE_URL: https://mahmoud-eldesouky.kosif199022.workers.dev
+    steps:
+      - uses: actions/checkout@v4
+      - name: Checkout latest Kosif main
+        uses: actions/checkout@v4
+        with:
+          repository: kosif199022-jpg/mahmoud1990
+          ref: main
+          path: kosif
+          fetch-depth: 1
+      - name: Validate latest merged source
+        working-directory: kosif
+        run: |
+          set -euo pipefail
+          npm run check
+          echo "SOURCE_COMMIT=$(git rev-parse HEAD)"
+          grep -q "version:'v36.3'" src/worker.js
+          grep -q '90% إلى 200%' public/index.html
+          grep -q 'kosif-native-v36-3-app' public/sw.js
+      - name: Move legacy AI gate verifier into Cloudflare secret
+        working-directory: kosif
+        shell: bash
+        run: |
+          set -euo pipefail
+          HASH=$(awk -F'"' '/^AI_GATE_HASH[[:space:]]*=[[:space:]]*"/{print $2;exit}' wrangler.toml)
+          if [ -n "$HASH" ]; then
+            printf '%s' "$HASH" | npx --yes wrangler@4 secret put AI_GATE_HASH --name mahmoud-eldesouky >/tmp/secret-put.log 2>&1
+            echo 'AI_GATE_HASH secret binding stored in Cloudflare.'
+            python - <<'PY'
+          from pathlib import Path
+          p=Path('wrangler.toml')
+          lines=p.read_text().splitlines()
+          out=[]
+          i=0
+          while i < len(lines):
+              if lines[i].strip()=='[vars]':
+                  block=[]; j=i+1
+                  while j < len(lines) and not lines[j].lstrip().startswith('['):
+                      block.append(lines[j]); j+=1
+                  kept=[x for x in block if not x.strip().startswith('AI_GATE_HASH')]
+                  if any(x.strip() for x in kept):
+                      out.append(lines[i]); out.extend(kept)
+                  i=j; continue
+              out.append(lines[i]); i+=1
+          p.write_text('\n'.join(out).rstrip()+'\n')
+          PY
+          else
+            echo 'Source already has no plaintext AI_GATE_HASH; existing Cloudflare secret will be used.'
+          fi
+          ! grep -q '^AI_GATE_HASH' wrangler.toml
+      - name: Deploy latest main with secret-only AI gate
+        working-directory: kosif
+        shell: bash
+        run: |
+          set -o pipefail
+          npx --yes wrangler@4 deploy --name mahmoud-eldesouky 2>&1 | tee /tmp/kosif-secure-deploy.log
+          grep -Ei 'Version ID|Current Version ID|Uploaded mahmoud-eldesouky|Deployed mahmoud-eldesouky' /tmp/kosif-secure-deploy.log || true
+      - name: Verify live security and v36.3 identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          cb="${GITHUB_RUN_ID}-$(date +%s%N)"
+          curl -fsS -H 'Cache-Control: no-store' "$LIVE_URL/__health?cb=$cb" -o /tmp/h.json
+          curl -fsS -H 'Cache-Control: no-store' "$LIVE_URL/__version?cb=$cb" -o /tmp/v.json
+          grep -q '"version":"v36.3"' /tmp/h.json
+          grep -q '"buildId":"2026.08.17-v36.3-master-requirements"' /tmp/v.json
+          code=$(curl -sS -o /tmp/locked.json -w '%{http_code}' -X POST -H 'content-type: application/json' --data '{"provider":"gemini","model":"gemini-3.6-flash","key":"dummy","prompt":"x"}' "$LIVE_URL/api/kosif/ai")
+          [ "$code" = 401 ]
+          grep -q 'AI_LOCKED' /tmp/locked.json
+          std=$(curl -sS -o /tmp/std.html -w '%{http_code}' "$LIVE_URL/standards/?cb=$cb")
+          smart=$(curl -sS -D /tmp/smart.h -o /tmp/smart.html -w '%{http_code}' "$LIVE_URL/library/smart?cb=$cb")
+          [ "$std" = 200 ] && [ "$smart" = 200 ]
+          tr -d '\r' < /tmp/smart.h | grep -qi '^x-kosif-library: smart-books'
+          echo 'KOSIF_V36_3_SECRET_ONLY_DEPLOY_OK'
