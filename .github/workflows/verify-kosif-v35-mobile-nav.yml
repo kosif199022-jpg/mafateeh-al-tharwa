@@ -1,0 +1,58 @@
+name: Verify Kosif v35 Mobile Navigation
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: kosif199022-jpg/mahmoud1990
+          ref: main
+      - run: |
+          npm init -y >/dev/null 2>&1
+          npm install --no-save playwright@1.54.2 >/dev/null
+          npx playwright install chromium >/dev/null
+      - name: Verify live mobile navigation
+        shell: bash
+        run: |
+          cat > probe.cjs <<'NODE'
+          const { chromium }=require('playwright');
+          (async()=>{
+            const b=await chromium.launch({headless:true});
+            const p=await b.newPage({viewport:{width:390,height:844},isMobile:true,hasTouch:true});
+            const errs=[];
+            p.on('pageerror',e=>errs.push('PAGEERROR '+(e.stack||e.message)));
+            p.on('console',m=>{if(m.type()==='error'&&!/Failed to load resource/.test(m.text()))errs.push('CONSOLE '+m.text())});
+            await p.goto('https://mahmoud-eldesouky.kosif199022.workers.dev/?cb='+Date.now(),{waitUntil:'domcontentloaded',timeout:60000});
+            await p.waitForTimeout(3500);
+            const ready=await p.locator('body').evaluate(el=>el.classList.contains('kosif-ready'));
+            if(!ready) throw new Error('body is not kosif-ready');
+            if(await p.locator('#kosif-boot').count()) throw new Error('boot overlay still present');
+            const nav=p.locator('#kosif-bottom-nav button');
+            console.log('NAV_COUNT',await nav.count());
+            if(await nav.count()!==5) throw new Error('expected 5 mobile nav buttons');
+            for(const label of ['الرئيسية','الميزان','الجولات','المطالبات','المزيد']){
+              const btn=nav.filter({hasText:label}).first();
+              if(!await btn.count()) throw new Error('missing nav '+label);
+              await btn.click();
+              await p.waitForTimeout(450);
+              console.log('CLICK_OK',label);
+            }
+            const more=await p.locator('#kosif-more').evaluate(el=>el.classList.contains('show'));
+            if(!more) throw new Error('more sheet did not open');
+            console.log('MORE_OPEN_OK');
+            console.log('ERRORS',JSON.stringify(errs));
+            if(errs.some(x=>/Kosif boot error|Cannot set properties of null/.test(x))) throw new Error(errs.join('\n'));
+            await b.close();
+          })().catch(e=>{console.error(e.stack||e);process.exit(1)});
+          NODE
+          node probe.cjs
