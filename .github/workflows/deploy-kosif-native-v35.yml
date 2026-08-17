@@ -38,7 +38,7 @@ jobs:
         run: |
           test -n "$CLOUDFLARE_API_TOKEN" || { echo '::error::CLOUDFLARE_API_TOKEN is missing in this repository.'; exit 2; }
 
-      - name: Validate Kosif v36.1 release source
+      - name: Validate Kosif v36.1.2 release source
         shell: bash
         working-directory: kosif
         run: |
@@ -47,6 +47,7 @@ jobs:
           test -f wrangler.toml
           test -f src/worker.js
           test -f public/index.html
+          test -f public/v36.css
           test -f public/v36-ai-gate.js
           test -f public/v36-standards-readiness.js
           test -f public/standards/index.html
@@ -58,9 +59,11 @@ jobs:
           node --check public/standards/reader-pro-v36.js
           node --check public/sw.js
           node --check public/standards/sw.js
-          grep -q "version:'36.1.1'" public/v36-ai-gate.js
-          grep -q '#kosif-bottom-nav{display:none' public/v36-ai-gate.js
-          grep -q '.tabs{display:block' public/v36-ai-gate.js
+          grep -q "version:'36.1.2'" public/v36-ai-gate.js
+          grep -q 'grid-template-columns:repeat(6,minmax(0,1fr))' public/v36.css
+          grep -q 'grid-template-columns:repeat(12,minmax(0,1fr))' public/v36.css
+          grep -q '#kosif-bottom-nav{display:none' public/v36.css
+          grep -q "kosif-native-v36-1-2-app" public/sw.js
           grep -q 'IFRS 20' public/v36-standards-readiness.js
           grep -q "VERIFIED_AS_OF='2026-08-17'" public/v36-standards-readiness.js
           grep -q 'socpaUpdate2026' public/v36-standards-readiness.js
@@ -72,7 +75,7 @@ jobs:
           console.log(m.release, m.aiGate.mode);
           NODE
 
-      - name: Deploy Kosif v36.1 to live Worker
+      - name: Deploy Kosif v36.1.2 to live Worker
         working-directory: kosif
         run: npx --yes wrangler@4 deploy --name mahmoud-eldesouky
 
@@ -98,18 +101,20 @@ jobs:
           done
           [ "$ok" -eq 1 ] || { echo '::error::Live v36.1 did not fully propagate within verification window.'; exit 1; }
 
-          gateok=0
+          uiok=0
           for attempt in $(seq 1 20); do
-            cb="${GITHUB_RUN_ID}-gate-${attempt}-$(date +%s%N)"
+            cb="${GITHUB_RUN_ID}-ui-${attempt}-$(date +%s%N)"
             gcode=$(curl -sS -H 'Cache-Control: no-cache, no-store, max-age=0' "$LIVE_URL/v36-ai-gate.js?cb=$cb" -o /tmp/gate.js -w '%{http_code}' || true)
-            gv=$(grep -c "version:'36.1.1'" /tmp/gate.js 2>/dev/null || true)
-            gn=$(grep -c '#kosif-bottom-nav{display:none' /tmp/gate.js 2>/dev/null || true)
-            gt=$(grep -c '.tabs{display:block' /tmp/gate.js 2>/dev/null || true)
-            echo "gate-attempt=$attempt http=$gcode version=$gv desktopNav=$gn desktopTabs=$gt"
-            if [ "$gcode" = 200 ] && [ "$gv" -gt 0 ] && [ "$gn" -gt 0 ] && [ "$gt" -gt 0 ]; then gateok=1; break; fi
+            ccode=$(curl -sS -H 'Cache-Control: no-cache, no-store, max-age=0' "$LIVE_URL/v36.css?cb=$cb" -o /tmp/v36.css -w '%{http_code}' || true)
+            gv=$(grep -c "version:'36.1.2'" /tmp/gate.js 2>/dev/null || true)
+            c6=$(grep -c 'grid-template-columns:repeat(6,minmax(0,1fr))' /tmp/v36.css 2>/dev/null || true)
+            c12=$(grep -c 'grid-template-columns:repeat(12,minmax(0,1fr))' /tmp/v36.css 2>/dev/null || true)
+            bn=$(grep -c '#kosif-bottom-nav{display:none' /tmp/v36.css 2>/dev/null || true)
+            echo "ui-attempt=$attempt gate=$gcode css=$ccode version=$gv grid6=$c6 grid12=$c12 mobileNavHidden=$bn"
+            if [ "$gcode" = 200 ] && [ "$ccode" = 200 ] && [ "$gv" -gt 0 ] && [ "$c6" -gt 0 ] && [ "$c12" -gt 0 ] && [ "$bn" -gt 0 ]; then uiok=1; break; fi
             sleep 5
           done
-          [ "$gateok" -eq 1 ] || { echo '::error::Desktop v36.1.1 runtime did not propagate.'; exit 1; }
+          [ "$uiok" -eq 1 ] || { echo '::error::Desktop v36.1.2 UI did not propagate.'; exit 1; }
 
           locked=$(curl -sS -o /tmp/locked.json -w '%{http_code}' -X POST -H 'content-type: application/json' --data '{"provider":"gemini","model":"gemini-3.6-flash","key":"dummy","prompt":"x"}' "$LIVE_URL/api/kosif/ai")
           echo "locked_ai_http=$locked body=$(cat /tmp/locked.json)"
@@ -136,4 +141,4 @@ jobs:
           grep -q 'IFRS 20' /tmp/readiness.js
           grep -q "VERIFIED_AS_OF='2026-08-17'" /tmp/readiness.js
           grep -q 'socpaUpdate2026' /tmp/readiness.js
-          echo "LIVE_KOSIF_V36_1_DESKTOP_OK $LIVE_URL"
+          echo "LIVE_KOSIF_V36_1_2_OK $LIVE_URL"
