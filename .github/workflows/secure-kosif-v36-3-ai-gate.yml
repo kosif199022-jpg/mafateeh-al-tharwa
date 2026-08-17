@@ -31,7 +31,7 @@ jobs:
           ref: main
           path: kosif
           fetch-depth: 1
-      - name: Validate latest merged source
+      - name: Validate cleaned merged source
         working-directory: kosif
         run: |
           set -euo pipefail
@@ -39,43 +39,19 @@ jobs:
           echo "SOURCE_COMMIT=$(git rev-parse HEAD)"
           grep -q "version:'v36.3'" src/worker.js
           grep -q 'KOSIF_AI_GATE_HASH' src/worker.js
+          ! grep -q '^AI_GATE_HASH' wrangler.toml
           grep -q '90% إلى 200%' public/index.html
           grep -q 'kosif-native-v36-3-app' public/sw.js
-      - name: Create dedicated Cloudflare secret and remove legacy var from deploy config
+      - name: Confirm source uses secret-only configuration
         working-directory: kosif
-        shell: bash
         run: |
           set -euo pipefail
-          HASH=$(awk -F'"' '/^AI_GATE_HASH[[:space:]]*=[[:space:]]*"/{print $2;exit}' wrangler.toml)
-          if [ -z "$HASH" ]; then
-            echo '::error::Legacy verifier is no longer in source; cannot seed the new secret in this migration run.'
+          if grep -q '^AI_GATE_HASH' wrangler.toml; then
+            echo '::error::Public AI gate verifier returned to wrangler.toml.'
             exit 2
           fi
-          if ! printf '%s' "$HASH" | npx --yes wrangler@4 secret put KOSIF_AI_GATE_HASH --name mahmoud-eldesouky >/tmp/secret-put.log 2>&1; then
-            cat /tmp/secret-put.log
-            exit 1
-          fi
-          echo 'KOSIF_AI_GATE_HASH secret binding stored in Cloudflare.'
-          python - <<'PY'
-          from pathlib import Path
-          p=Path('wrangler.toml')
-          lines=p.read_text().splitlines()
-          out=[]
-          i=0
-          while i < len(lines):
-              if lines[i].strip()=='[vars]':
-                  block=[]; j=i+1
-                  while j < len(lines) and not lines[j].lstrip().startswith('['):
-                      block.append(lines[j]); j+=1
-                  kept=[x for x in block if not x.strip().startswith('AI_GATE_HASH')]
-                  if any(x.strip() for x in kept):
-                      out.append(lines[i]); out.extend(kept)
-                  i=j; continue
-              out.append(lines[i]); i+=1
-          p.write_text('\n'.join(out).rstrip()+'\n')
-          PY
-          ! grep -q '^AI_GATE_HASH' wrangler.toml
-      - name: Deploy latest main with dedicated secret-only AI gate
+          echo 'Public AI gate verifier absent; existing KOSIF_AI_GATE_HASH Cloudflare secret will be retained.'
+      - name: Deploy latest cleaned main
         working-directory: kosif
         shell: bash
         run: |
@@ -83,7 +59,7 @@ jobs:
           npx --yes wrangler@4 deploy --name mahmoud-eldesouky 2>&1 | tee /tmp/kosif-secure-deploy.log
           echo '--- deployment identity ---'
           grep -Ei 'Version ID|Current Version ID|Uploaded mahmoud-eldesouky|Deployed mahmoud-eldesouky' /tmp/kosif-secure-deploy.log || true
-      - name: Verify live security and v36.3 identity
+      - name: Verify live secret gate, identity and libraries
         shell: bash
         run: |
           set -euo pipefail
@@ -106,4 +82,4 @@ jobs:
           smart=$(curl -sS -D /tmp/smart.h -o /tmp/smart.html -w '%{http_code}' "$LIVE_URL/library/smart?cb=$cb")
           [ "$std" = 200 ] && [ "$smart" = 200 ]
           tr -d '\r' < /tmp/smart.h | grep -qi '^x-kosif-library: smart-books'
-          echo 'KOSIF_V36_3_SECRET_ONLY_DEPLOY_OK'
+          echo 'KOSIF_V36_3_CLEAN_SECRET_DEPLOY_OK'
