@@ -1,0 +1,92 @@
+name: Deploy Kosif AI Owner Gate
+
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/deploy-kosif-ai-owner-gate.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-kosif-ai-owner-gate
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      CLOUDFLARE_ACCOUNT_ID: 9ff3d8494afab356ecbf95a2a231a6b5
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      AI_GATE_HASH_VALUE: d1f34839a76c41713d8e1e2a8a8775dc327774d9ad74c2f35623dd36aee21eaa
+      LIVE_URL: https://mahmoud-eldesouky.kosif199022.workers.dev
+    steps:
+      - name: Checkout credential repository
+        uses: actions/checkout@v4
+
+      - name: Checkout Kosif production main
+        uses: actions/checkout@v4
+        with:
+          repository: kosif199022-jpg/mahmoud1990
+          ref: main
+          path: kosif
+
+      - name: Validate locked AI source
+        working-directory: kosif
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check public/v36-ai-gate.js
+          node --check public/sw.js
+          grep -q '/v36-ai-gate.js?v=36.1' public/index.html
+          grep -q 'AI_GATE_HASH' src/worker.js
+          grep -q 'AI_LOCKED' src/worker.js
+          grep -q 'HttpOnly; Secure; SameSite=Strict' src/worker.js
+          grep -q "'/v36-ai-gate.js'" public/sw.js
+          npx --yes esbuild src/worker.js --bundle --format=esm --platform=browser --outfile=/tmp/kosif-ai-gate-worker.mjs >/dev/null
+
+      - name: Store owner password hash as Cloudflare secret
+        working-directory: kosif
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s' "$AI_GATE_HASH_VALUE" | npx --yes wrangler@4 secret put AI_GATE_HASH --name mahmoud-eldesouky
+          npx --yes wrangler@4 secret list --name mahmoud-eldesouky | tee /tmp/secrets.json
+          grep -q 'AI_GATE_HASH' /tmp/secrets.json
+
+      - name: Deploy locked Kosif Worker
+        working-directory: kosif
+        run: npx --yes wrangler@4 deploy --name mahmoud-eldesouky
+
+      - name: Verify live AI is fail-closed
+        shell: bash
+        run: |
+          set -euo pipefail
+          cb="${GITHUB_RUN_ID}-$(date +%s)"
+          curl -fsS -H 'Cache-Control: no-cache, no-store' "$LIVE_URL/__health?cb=$cb" -o /tmp/health.json
+          cat /tmp/health.json
+          grep -q '"version":"v36"' /tmp/health.json
+          grep -q '"aiGate":"owner-password"' /tmp/health.json
+
+          curl -fsS -H 'Cache-Control: no-cache, no-store' "$LIVE_URL/?cb=$cb" -o /tmp/index.html
+          grep -q '/v36-ai-gate.js?v=36.1' /tmp/index.html
+          curl -fsS -H 'Cache-Control: no-cache, no-store' "$LIVE_URL/v36-ai-gate.js?cb=$cb" -o /tmp/gate.js
+          grep -q 'KosifAIGate' /tmp/gate.js
+
+          code=$(curl -sS -H 'Cache-Control: no-cache, no-store' "$LIVE_URL/api/kosif/auth/status?cb=$cb" -o /tmp/status.json -w '%{http_code}')
+          echo "status HTTP=$code $(cat /tmp/status.json)"
+          [ "$code" = 200 ]
+          grep -q '"unlocked":false' /tmp/status.json
+
+          code=$(curl -sS -X POST "$LIVE_URL/api/kosif/ai" -H 'content-type: application/json' --data '{"provider":"gemini","key":"dummy","prompt":"test"}' -o /tmp/locked.json -w '%{http_code}')
+          echo "ai locked HTTP=$code $(cat /tmp/locked.json)"
+          [ "$code" = 401 ]
+          grep -q 'AI_LOCKED' /tmp/locked.json
+
+          code=$(curl -sS -X POST "$LIVE_URL/api/kosif/auth/login" -H 'content-type: application/json' --data '{"password":"definitely-wrong-password"}' -o /tmp/wrong.json -w '%{http_code}')
+          echo "wrong login HTTP=$code $(cat /tmp/wrong.json)"
+          [ "$code" = 401 ]
+          grep -q 'الباسورد غير صحيح' /tmp/wrong.json
+          echo 'KOSIF_AI_OWNER_GATE_LIVE_OK'
