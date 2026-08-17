@@ -1,0 +1,45 @@
+name: Fix Kosif v36.3 Deploy Release Marker
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/fix-kosif-v36-3-release-marker.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: Align deploy verifier with current release marker
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('.github/workflows/deploy-kosif-native-v35.yml')
+          s=p.read_text()
+          old="[ \"$release\" = 'native-v36-3-master-requirements' ]"
+          new="[ \"$release\" = 'native-v36-3-master-requirements-zai' ]"
+          if old not in s:
+              if new in s:
+                  print('already fixed')
+              else:
+                  raise SystemExit('expected release-marker assertion not found')
+          else:
+              p.write_text(s.replace(old,new,1))
+              print('release marker fixed')
+          PY
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add .github/workflows/deploy-kosif-native-v35.yml
+          if ! git diff --cached --quiet; then
+            git commit -m 'Accept current Z.ai Kosif release marker in live verifier'
+            git push origin HEAD:main
+          fi
