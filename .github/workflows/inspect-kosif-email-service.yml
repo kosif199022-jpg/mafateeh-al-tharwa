@@ -1,0 +1,61 @@
+name: Inspect Kosif Email Service
+
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/inspect-kosif-email-service.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    env:
+      CLOUDFLARE_ACCOUNT_ID: 9ff3d8494afab356ecbf95a2a231a6b5
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      OWNER_EMAIL: melkosif57@gmail.com
+    steps:
+      - uses: actions/checkout@v4
+      - name: Inspect zones and verified destination addresses
+        shell: bash
+        run: |
+          set -euo pipefail
+          auth=(-H "Authorization: Bearer $CLOUDFLARE_API_TOKEN")
+          api=https://api.cloudflare.com/client/v4
+          echo '--- token verify ---'
+          curl -fsS "${auth[@]}" "$api/user/tokens/verify" | python3 -m json.tool || true
+          echo '--- zones ---'
+          curl -fsS "${auth[@]}" "$api/zones?per_page=50" -o /tmp/zones.json || true
+          python3 - <<'PY'
+          import json
+          try:d=json.load(open('/tmp/zones.json'))
+          except Exception as e: print('zones unreadable',e);raise SystemExit
+          print('success',d.get('success'))
+          for z in d.get('result') or []: print(z.get('id'),z.get('name'),z.get('status'))
+          if d.get('errors'): print('errors',d['errors'])
+          PY
+          echo '--- destination addresses ---'
+          code=$(curl -sS "${auth[@]}" "$api/accounts/$CLOUDFLARE_ACCOUNT_ID/email/routing/addresses?per_page=50" -o /tmp/addresses.json -w '%{http_code}')
+          echo HTTP=$code
+          python3 - <<'PY'
+          import json,os
+          d=json.load(open('/tmp/addresses.json'))
+          print('success',d.get('success'))
+          for x in d.get('result') or []:
+            email=x.get('email'); verified=bool(x.get('verified')); print(email,'verified='+str(verified),x.get('id'))
+          print('OWNER_MATCH',[(x.get('email'),bool(x.get('verified'))) for x in d.get('result') or [] if (x.get('email') or '').lower()==os.environ['OWNER_EMAIL'].lower()])
+          if d.get('errors'): print('errors',d['errors'])
+          PY
+          echo '--- email routing by zone ---'
+          python3 - <<'PY' >/tmp/zone-lines
+          import json
+          d=json.load(open('/tmp/zones.json'))
+          for z in d.get('result') or []: print(z.get('id'),z.get('name'))
+          PY
+          while read zid zname; do
+            [ -n "$zid" ] || continue
+            code=$(curl -sS "${auth[@]}" "$api/zones/$zid/email/routing" -o /tmp/routing.json -w '%{http_code}')
+            echo "$zname routing HTTP=$code $(python3 -c 'import json;d=json.load(open("/tmp/routing.json"));r=d.get("result") or {};print("enabled="+str(r.get("enabled"))+" status="+str(r.get("status"))+" errors="+str(d.get("errors") or []))' 2>/dev/null || true)"
+          done </tmp/zone-lines
