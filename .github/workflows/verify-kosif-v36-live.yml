@@ -1,0 +1,73 @@
+name: Verify Kosif v36 Live Browser
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/verify-kosif-v36-live.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-live:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      LIVE_URL: https://mahmoud-eldesouky.kosif199022.workers.dev
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Chromium
+        run: |
+          npm init -y >/dev/null 2>&1
+          npm install --no-save playwright@1.54.2 >/dev/null
+          npx playwright install chromium >/dev/null
+      - name: Exercise production v36 on mobile browser
+        shell: bash
+        run: |
+          cat > probe.cjs <<'NODE'
+          const {chromium}=require('playwright');
+          const ok=(v,m)=>{if(!v)throw new Error(m)};
+          (async()=>{
+            const browser=await chromium.launch({headless:true});
+            const page=await browser.newPage({viewport:{width:390,height:844},isMobile:true,hasTouch:true});
+            const errors=[],bad=[];
+            page.on('pageerror',e=>errors.push('PAGEERROR '+(e.stack||e.message)));
+            page.on('console',m=>{if(m.type()==='error')errors.push('CONSOLE '+m.text())});
+            page.on('response',r=>{const u=new URL(r.url());if(r.status()>=400&&!u.pathname.startsWith('/api/'))bad.push(r.status()+' '+u.pathname)});
+            const cb=Date.now();
+            const health=await page.request.get(process.env.LIVE_URL+'/__health?cb='+cb,{headers:{'cache-control':'no-cache, no-store'}});
+            console.log('HEALTH',health.status(),await health.text());
+            ok(health.ok(),'health HTTP failure');const hj=await health.json();ok(hj.version==='v36'&&hj.release==='Consolidated','health is not v36 Consolidated');
+            const response=await page.goto(process.env.LIVE_URL+'/?cb='+cb,{waitUntil:'domcontentloaded',timeout:60000});
+            console.log('ROOT_HTTP',response.status(),'RELEASE',response.headers()['x-kosif-release']);
+            ok(response.status()===200,'root HTTP failure');ok(response.headers()['x-kosif-release']==='native-v36-consolidated','wrong release header');
+            await page.waitForTimeout(2200);
+            console.log('READY',await page.locator('body').getAttribute('class'),'BOOT',await page.locator('#kosif-boot').count());
+            ok(await page.locator('body').evaluate(e=>e.classList.contains('kosif-ready')),'body is not kosif-ready');ok(await page.locator('#kosif-boot').count()===0,'boot overlay remained');
+            const funcs=await page.evaluate(()=>Object.fromEntries(['go','refreshAll','renderOutputs','callGemini','fileToParts','runNextRound','renderMap','applyDemo'].map(k=>[k,typeof globalThis[k]])));
+            console.log('FUNCS',JSON.stringify(funcs));for(const [k,v] of Object.entries(funcs))ok(v==='function','missing '+k);
+            await page.evaluate(()=>applyDemo('holding',true));await page.waitForTimeout(700);
+            const st=await page.evaluate(()=>({tb:state.tb.accounts.length,rounds:state.rounds.length,report:!!state.report,demo:state.demo}));console.log('DEMO',JSON.stringify(st));ok(st.tb>=100&&st.rounds===3&&st.report,'demo state incomplete');
+            const tbRows=await page.locator('#tb-result tbody tr').count();console.log('TB_ROWS',tbRows);ok(tbRows>=100,'TB did not render');
+            for(const v of ['overview','tb','rounds','pbc','analytics','reviewer','map','outputs','council','governance','standards-readiness']){await page.evaluate(x=>go(x),v);await page.waitForTimeout(80);const shown=await page.locator('#view-'+v).evaluate(e=>e.classList.contains('show'));console.log('VIEW',v,shown);ok(shown,'view failed '+v)}
+            await page.evaluate(()=>go('analytics'));await page.waitForTimeout(100);const risks=await page.locator('#v36-risk-register tbody tr').count();console.log('RISKS',risks);ok(risks>0,'risk register empty');
+            await page.evaluate(()=>go('outputs'));await page.waitForTimeout(100);const adj=await page.locator('#adj-body tbody tr').count();console.log('ADJ_ROWS',adj);ok(adj>=100,'adjusted TB empty');
+            ok(await page.locator('#btn-export-word').count()===1,'Word export missing');ok(await page.locator('#btn-audio-summary').count()===1,'audio summary missing');
+            const nav=await page.locator('#kosif-bottom-nav button').count();console.log('NAV_COUNT',nav);ok(nav===5,'mobile nav wrong');
+            const standards=await page.request.get(process.env.LIVE_URL+'/standards/?cb='+cb,{headers:{'cache-control':'no-cache, no-store'}});console.log('STANDARDS_HTTP',standards.status());ok(standards.ok(),'standards route failed');
+            console.log('HTTP_BAD',JSON.stringify([...new Set(bad)]));console.log('ERRORS',JSON.stringify(errors));
+            ok(bad.length===0,'static HTTP errors '+bad.join(','));const fatal=errors.filter(x=>/ReferenceError|TypeError|SyntaxError|Kosif boot error|Cannot set properties of null/i.test(x));ok(fatal.length===0,'fatal runtime errors '+fatal.join('\n'));
+            await page.screenshot({path:'kosif-v36-live.png',fullPage:true});
+            await browser.close();console.log('KOSIF_V36_LIVE_BROWSER_OK');
+          })().catch(e=>{console.error(e.stack||e);process.exit(1)});
+          NODE
+          node probe.cjs
+      - name: Upload live screenshot
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kosif-v36-live-browser
+          path: kosif-v36-live.png
+          if-no-files-found: ignore
