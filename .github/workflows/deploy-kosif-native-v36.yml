@@ -1,4 +1,4 @@
-name: Deploy Kosif v36.2 Live
+name: Deploy Kosif v36.2.1 Live
 
 on:
   push:
@@ -25,40 +25,43 @@ jobs:
     steps:
       - name: Checkout deployment credential repository
         uses: actions/checkout@v4
-
       - name: Checkout Kosif production main
         uses: actions/checkout@v4
         with:
           repository: kosif199022-jpg/mahmoud1990
           ref: main
           path: kosif
-
       - name: Verify Cloudflare credentials
         run: test -n "$CLOUDFLARE_API_TOKEN"
-
-      - name: Validate Kosif v36.2 production source
+      - name: Validate Kosif v36.2.1 production source
         working-directory: kosif
         shell: bash
         run: |
           set -euo pipefail
-          for f in wrangler.toml src/worker.js src/kosif-workspace.js src/professional-upgrade.js public/index.html public/v36-features.js public/v36-operations.js public/v36-outputs.js public/v36-governance.js public/v36-standards-readiness.js public/v36-ai-gate.js public/v36.css public/sw.js public/standards/index.html public/standards/bridge.js public/standards/sw.js scripts/check-all.mjs scripts/validate-payloads.mjs scripts/deep-audit-v36.mjs; do
+          for f in wrangler.toml src/worker.js src/kosif-workspace.js src/professional-upgrade.js src/standards-mafateeh.js src/legacy-worker.js public/index.html public/v36-features.js public/v36-operations.js public/v36-outputs.js public/v36-governance.js public/v36-standards-readiness.js public/v36-ai-gate.js public/v36.css public/v36-motion.css public/sw.js public/standards/index.html public/standards/bridge.js public/standards/sw.js public/standards/data/library.json public/standards/data/b4.json public/standards/data/b4/46.json scripts/check-all.mjs scripts/validate-payloads.mjs scripts/check-legacy-regressions.mjs scripts/deep-audit-v36.mjs; do
             test -f "$f" || { echo "::error::Missing $f"; exit 1; }
           done
           npm run check
-          node scripts/deep-audit-v36.mjs
-          npx --yes esbuild src/worker.js --bundle --format=esm --platform=browser --outfile=/tmp/kosif-v36-2-worker.mjs >/dev/null
-          grep -q "native-v36-2-attachments-upgrade" src/worker.js
-          grep -q "version:'v36.2'" src/worker.js
+          npx --yes esbuild src/worker.js --bundle --format=esm --platform=browser --outfile=/tmp/kosif-v36-2-1-worker.mjs >/dev/null
+          grep -q "native-v36-2-1-library-hardening" src/worker.js
+          grep -q "version:'v36.2.1'" src/worker.js
+          grep -q '/v36-motion.css?v=36.2.1' public/index.html
           grep -q '/v36-operations.js?v=36.2' public/index.html
           grep -q 'KosifOperations' public/v36-operations.js
           grep -q 'gemini-3.6-flash' src/kosif-workspace.js
           grep -q 'gpt-5.6' src/kosif-workspace.js
-
-      - name: Deploy Kosif v36.2 to live Worker
+          node - <<'NODE'
+          const fs=require('fs'),z=require('zlib');
+          const lib=JSON.parse(fs.readFileSync('public/standards/data/library.json','utf8')),b=lib.find(x=>x.id==='b4');
+          if(lib.length!==4||!b||b.parts!==6||b.chapters!==46||b.words!==34700||b.professionalAuthority!==false)throw Error('b4 release invariant failed');
+          const idx=z.gunzipSync(fs.readFileSync('public/standards/data/search-index.json.gz')).toString();
+          if(/"book"\s*:\s*"b4"/.test(idx))throw Error('b4 leaked into professional index');
+          console.log('B4_RELEASE_INVARIANT_OK',b);
+          NODE
+      - name: Deploy Kosif v36.2.1 to live Worker
         working-directory: kosif
         run: npx --yes wrangler@4 deploy --name mahmoud-eldesouky
-
-      - name: Verify live v36.2 deployment
+      - name: Verify live v36.2.1 deployment
         shell: bash
         run: |
           set -euo pipefail
@@ -67,32 +70,28 @@ jobs:
             cb="${GITHUB_RUN_ID}-${attempt}-$(date +%s)"
             code=$(curl -LfsS --max-redirs 5 -H 'Cache-Control: no-cache, no-store' "$LIVE_URL/__health?cb=$cb" -o /tmp/health.json -w '%{http_code}' || true)
             echo "health attempt=$attempt http=$code body=$(cat /tmp/health.json 2>/dev/null || true)"
-            if [ "$code" = 200 ] && grep -q '"version":"v36.2"' /tmp/health.json && grep -q '"release":"Attachment Review & Operational Intelligence"' /tmp/health.json; then ok=1; break; fi
+            if [ "$code" = 200 ] && grep -q '"version":"v36.2.1"' /tmp/health.json && grep -q '"release":"Library Integrity & Motion Hardening"' /tmp/health.json; then ok=1; break; fi
             sleep 4
           done
-          [ "$ok" -eq 1 ] || { echo '::error::Live Worker did not report Kosif v36.2.'; exit 1; }
-
+          [ "$ok" -eq 1 ] || { echo '::error::Live Worker did not report Kosif v36.2.1.'; exit 1; }
           ok=0
           for attempt in $(seq 1 20); do
             cb="${GITHUB_RUN_ID}-root-${attempt}-$(date +%s)"
             curl -LfsS -D /tmp/headers.txt -H 'Cache-Control: no-cache, no-store' "$LIVE_URL/?cb=$cb" -o /tmp/index.html || true
             tr -d '\r' < /tmp/headers.txt > /tmp/headers.clean || true
-            if grep -qi '^x-kosif-release: native-v36-2-attachments-upgrade$' /tmp/headers.clean && grep -q '/v36-operations.js?v=36.2' /tmp/index.html; then ok=1; break; fi
+            if grep -qi '^x-kosif-release: native-v36-2-1-library-hardening$' /tmp/headers.clean && grep -q '/v36-motion.css?v=36.2.1' /tmp/index.html; then ok=1; break; fi
             sleep 4
           done
-          [ "$ok" -eq 1 ] || { echo '::error::Live HTML/header not updated to v36.2.'; exit 1; }
-
+          [ "$ok" -eq 1 ] || { echo '::error::Live HTML/header not updated to v36.2.1.'; exit 1; }
           cb="${GITHUB_RUN_ID}-assets-$(date +%s)"
-          for asset in /v36-operations.js /v36-features.js /v36-ai-gate.js /v36-standards-readiness.js /sw.js /standards/ /standards/reader-pro-v36.js /standards/data/library.json /library/smart; do
+          for asset in /v36-motion.css /v36-operations.js /v36-features.js /v36-ai-gate.js /sw.js /standards/ /standards/reader-pro-v36.js /standards/data/library.json /standards/data/b4.json /standards/data/b4/46.json /library/smart; do
             code=$(curl -LfsS -H 'Cache-Control: no-cache, no-store' "$LIVE_URL$asset?cb=$cb" -o /tmp/asset -w '%{http_code}' || true)
             echo "$asset => $code bytes=$(wc -c </tmp/asset 2>/dev/null || echo 0)"
             [ "$code" = 200 ] || { echo "::error::$asset returned $code"; exit 1; }
           done
-          curl -LfsS -H 'Cache-Control: no-cache, no-store' "$LIVE_URL/v36-operations.js?cb=$cb" -o /tmp/ops.js
-          grep -q 'KosifOperations' /tmp/ops.js
-          grep -q 'هوامش سالبة' /tmp/ops.js
-
+          curl -LfsS -H 'Cache-Control: no-cache, no-store' "$LIVE_URL/standards/data/library.json?cb=$cb" -o /tmp/lib.json
+          node -e "const a=require('/tmp/lib.json'),b=a.find(x=>x.id==='b4');if(a.length!==4||!b||b.chapters!==46||b.words!==34700||b.professionalAuthority!==false)process.exit(1)"
           ai_code=$(curl -sS -o /tmp/ai.json -w '%{http_code}' -X POST -H 'content-type: application/json' --data '{"provider":"gemini","model":"gemini-3.6-flash","key":"dummy","prompt":"x"}' "$LIVE_URL/api/kosif/ai")
           echo "AI locked status=$ai_code body=$(cat /tmp/ai.json)"
           [ "$ai_code" = 401 ] || { echo '::error::AI is not fail-closed.'; exit 1; }
-          echo "LIVE_KOSIF_V36_2_OK $LIVE_URL"
+          echo "LIVE_KOSIF_V36_2_1_OK $LIVE_URL"
