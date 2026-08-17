@@ -68,34 +68,46 @@ jobs:
         working-directory: kosif
         run: npx --yes wrangler@4 deploy --name mahmoud-eldesouky
 
-      - name: Verify live deployment
+      - name: Verify live deployment after propagation
         shell: bash
         run: |
           set -euo pipefail
           ok=0
-          for attempt in $(seq 1 15); do
-            cb="${GITHUB_RUN_ID}-${attempt}-$(date +%s)"
-            code=$(curl -LfsS --max-redirs 5 -H 'Cache-Control: no-cache, no-store' "$LIVE_URL/__health?cb=$cb" -o /tmp/health.json -w '%{http_code}' || true)
-            echo "attempt=$attempt http=$code body=$(cat /tmp/health.json 2>/dev/null || true)"
-            if [ "$code" = 200 ] && grep -q '"version":"v36.1"' /tmp/health.json && grep -q '"aiGate":"owner-password+verified-key"' /tmp/health.json; then ok=1; break; fi
-            sleep 4
+          for attempt in $(seq 1 20); do
+            cb="${GITHUB_RUN_ID}-${attempt}-$(date +%s%N)"
+            hcode=$(curl -sS -H 'Cache-Control: no-cache, no-store, max-age=0' "$LIVE_URL/__health?cb=$cb" -o /tmp/health.json -w '%{http_code}' || true)
+            rcode=$(curl -sS -D /tmp/headers.txt -H 'Cache-Control: no-cache, no-store, max-age=0' "$LIVE_URL/?cb=$cb" -o /tmp/index.html -w '%{http_code}' || true)
+            tr -d '\r' < /tmp/headers.txt > /tmp/headers.clean || true
+            release=$(awk 'BEGIN{IGNORECASE=1} /^x-kosif-release:/{sub(/^x-kosif-release:[[:space:]]*/,"");print;exit}' /tmp/headers.clean || true)
+            echo "attempt=$attempt health=$hcode root=$rcode release=$release healthBody=$(cat /tmp/health.json 2>/dev/null || true)"
+            if [ "$hcode" = 200 ] && [ "$rcode" = 200 ] \
+              && grep -q '"version":"v36.1"' /tmp/health.json \
+              && grep -q '"aiGate":"owner-password+verified-key"' /tmp/health.json \
+              && [ "$release" = 'native-v36-1-deep-audit' ] \
+              && grep -q 'KOSIF_CLIENT_V36_1_2026_08_17' /tmp/index.html \
+              && ! grep -q 'AI Active ·' /tmp/index.html; then ok=1; break; fi
+            sleep 5
           done
-          [ "$ok" -eq 1 ] || { echo '::error::Live Worker did not report Kosif v36.1.'; exit 1; }
-
-          cb="${GITHUB_RUN_ID}-final-$(date +%s)"
-          curl -LfsS -D /tmp/headers.txt -H 'Cache-Control: no-cache, no-store' "$LIVE_URL/?cb=$cb" -o /tmp/index.html
-          tr -d '\r' < /tmp/headers.txt | tee /tmp/headers.clean
-          grep -qi '^x-kosif-release: native-v36-1-deep-audit$' /tmp/headers.clean
-          grep -q 'KOSIF_CLIENT_V36_1_2026_08_17' /tmp/index.html
-          ! grep -q 'AI Active ·' /tmp/index.html
+          [ "$ok" -eq 1 ] || { echo '::error::Live v36.1 did not fully propagate within verification window.'; exit 1; }
 
           locked=$(curl -sS -o /tmp/locked.json -w '%{http_code}' -X POST -H 'content-type: application/json' --data '{"provider":"gemini","model":"gemini-3.6-flash","key":"dummy","prompt":"x"}' "$LIVE_URL/api/kosif/ai")
           echo "locked_ai_http=$locked body=$(cat /tmp/locked.json)"
           [ "$locked" = 401 ]
           grep -q 'AI_LOCKED' /tmp/locked.json
 
-          curl -LfsS -H 'Cache-Control: no-cache, no-store' "$LIVE_URL/standards/?cb=$cb" -o /tmp/standards.html
+          testlocked=$(curl -sS -o /tmp/testlocked.json -w '%{http_code}' -X POST -H 'content-type: application/json' --data '{"provider":"gemini","model":"gemini-3.6-flash","key":"dummy"}' "$LIVE_URL/api/kosif/ai/test")
+          echo "locked_ai_test_http=$testlocked body=$(cat /tmp/testlocked.json)"
+          [ "$testlocked" = 401 ]
+          grep -q 'AI_LOCKED' /tmp/testlocked.json
+
+          cb="${GITHUB_RUN_ID}-std-$(date +%s%N)"
+          curl -fsS -H 'Cache-Control: no-cache, no-store, max-age=0' "$LIVE_URL/standards/?cb=$cb" -o /tmp/standards.html
           grep -q 'reader-pro-v36.js?v=36.1' /tmp/standards.html
-          curl -LfsS -H 'Cache-Control: no-cache, no-store' "$LIVE_URL/standards/data/library.json?cb=$cb" -o /tmp/library.json
-          node -e "const x=require('/tmp/library.json'); const b=x.find(v=>v.id==='b3'); if(!b||b.chapters!==34) process.exit(1); console.log('live b3 chapters',b.chapters)"
+          curl -fsS -H 'Cache-Control: no-cache, no-store, max-age=0' "$LIVE_URL/standards/data/library.json?cb=$cb" -o /tmp/library.json
+          node - <<'NODE'
+          const x=require('/tmp/library.json');
+          const b1=x.find(v=>v.id==='b1'),b3=x.find(v=>v.id==='b3'),b2=x.find(v=>v.id==='b2');
+          if(!b1||b1.chapters!==66||!b3||b3.chapters!==34||!b2||b2.chapters!==139) process.exit(1);
+          console.log('live chapters',b1.chapters,b3.chapters,b2.chapters);
+          NODE
           echo "LIVE_KOSIF_V36_1_OK $LIVE_URL"
