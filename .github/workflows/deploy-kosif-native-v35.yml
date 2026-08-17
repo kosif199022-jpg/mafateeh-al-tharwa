@@ -44,6 +44,9 @@ jobs:
           test -f public/index.html
           test -f public/v36-continuity.js
           test -f public/v36-engagement.js
+          test -f public/v36-voice-guide.js
+          test -f public/v36-history-restore.js
+          test -f public/v36-reviewer-media.js
           test -f scripts/verify-v36-3-runtime.cjs
           npm run check
           grep -q '"version": "36.3.0"' package.json
@@ -55,6 +58,14 @@ jobs:
           grep -q 'dataset.kosifCompanyState' public/v36-continuity.js
           ! grep -q 'document.documentElement.dataset.kosifActiveCompany' public/v36-continuity.js
           grep -q '90% إلى 200%' public/index.html
+          grep -q '/v36-voice-guide.js?v=36.3-history1' public/index.html
+          grep -q '/v36-history-restore.js?v=36.3-history1' public/index.html
+          grep -q "'/v36-voice-guide.js'" public/sw.js
+          grep -q "'/v36-history-restore.js'" public/sw.js
+          grep -q 'ابدأ منين' public/v36-voice-guide.js
+          grep -q "it:'Italiano'" public/v36-history-restore.js
+          grep -q "hi:'हिन्दी'" public/v36-history-restore.js
+          grep -q "\['IAS 33','IFRS 8','ISA 701'\]" public/v36-history-restore.js
           grep -q 'kosif-native-v36-3-app' public/sw.js
           grep -q 'kosif-native-v36-3-standards' public/standards/sw.js
           grep -q 'IFRS 20' public/v36-standards-readiness.js
@@ -93,6 +104,8 @@ jobs:
               && [ "$release" = 'native-v36-3-master-requirements' ] \
               && grep -q 'id="kosif-boot"' /tmp/index.html \
               && grep -q '/v36-continuity.js?v=36.3' /tmp/index.html \
+              && grep -q '/v36-voice-guide.js?v=36.3-history1' /tmp/index.html \
+              && grep -q '/v36-history-restore.js?v=36.3-history1' /tmp/index.html \
               && grep -q '90% إلى 200%' /tmp/index.html \
               && ! grep -q 'https://kosif-standards-library.kosif199022.workers.dev/' /tmp/index.html \
               && ! grep -q 'AI Active ·' /tmp/index.html; then ok=1; break; fi
@@ -150,5 +163,12 @@ jobs:
           grep -q 'IFRS 20' /tmp/readiness.js
           grep -q "VERIFIED_AS_OF='2026-08-17'" /tmp/readiness.js
           grep -q 'socpaUpdate2026' /tmp/readiness.js
+          curl -fsS -H 'Cache-Control: no-cache, no-store, max-age=0' "$LIVE_URL/v36-voice-guide.js?cb=$cb" -o /tmp/voice.js
+          grep -q 'ابدأ منين' /tmp/voice.js
+          grep -q 'SpeechSynthesisUtterance' /tmp/voice.js
+          curl -fsS -H 'Cache-Control: no-cache, no-store, max-age=0' "$LIVE_URL/v36-history-restore.js?cb=$cb" -o /tmp/history.js
+          grep -q "it:'Italiano'" /tmp/history.js
+          grep -q "hi:'हिन्दी'" /tmp/history.js
+          grep -q 'SME plus listed\|smeConflict' /tmp/history.js
 
-          echo "LIVE_KOSIF_V36_3_OK $LIVE_URL"
+          echo "LIVE_KOSIF_V36_3_HISTORY_RESTORATION_OK $LIVE_URL"
