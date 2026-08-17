@@ -1,0 +1,26 @@
+name: Verify Kosif Native v35 Live Routes
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/verify-kosif-native-v35-live.yml'
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check live routes
+        shell: bash
+        run: |
+          set +e
+          base='https://mahmoud-eldesouky.kosif199022.workers.dev'
+          for p in '/' '/__health' '/standards' '/standards/' '/standards/index.html' '/standards/data/ref-map.json' '/standards/data/search-index.meta.json' '/standards/bridge.js'; do
+            code=$(curl -sS -L -o /tmp/out -w '%{http_code}' "$base$p?cb=${GITHUB_RUN_ID}-$(date +%s%N)" || true)
+            bytes=$(wc -c </tmp/out 2>/dev/null || echo 0)
+            type=$(curl -sSI "$base$p" | tr -d '\r' | awk -F': ' 'tolower($1)=="content-type"{print $2;exit}')
+            echo "$p -> HTTP $code bytes=$bytes type=$type"
+            head -c 180 /tmp/out 2>/dev/null | tr '\n' ' '; echo
+          done
+          exit 0
