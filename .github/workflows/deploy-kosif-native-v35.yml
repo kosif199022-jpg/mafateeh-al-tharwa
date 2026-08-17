@@ -1,4 +1,4 @@
-name: Deploy Kosif Native v35 Live
+name: Deploy Kosif v36.1 Live
 
 on:
   push:
@@ -11,13 +11,13 @@ permissions:
   contents: read
 
 concurrency:
-  group: deploy-kosif-native-v35-live
+  group: deploy-kosif-live
   cancel-in-progress: false
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     env:
       CLOUDFLARE_ACCOUNT_ID: 9ff3d8494afab356ecbf95a2a231a6b5
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -26,7 +26,7 @@ jobs:
       - name: Checkout deployment credential repository
         uses: actions/checkout@v4
 
-      - name: Checkout Kosif Native v35
+      - name: Checkout Kosif production main
         uses: actions/checkout@v4
         with:
           repository: kosif199022-jpg/mahmoud1990
@@ -38,27 +38,33 @@ jobs:
         run: |
           test -n "$CLOUDFLARE_API_TOKEN" || { echo '::error::CLOUDFLARE_API_TOKEN is missing in this repository.'; exit 2; }
 
-      - name: Validate Kosif v35 source
+      - name: Validate Kosif v36.1 release source
         shell: bash
         working-directory: kosif
         run: |
           set -euo pipefail
-          test -f RELEASE_MANIFEST_V35.json
+          test -f RELEASE_MANIFEST_V36_1.json
           test -f wrangler.toml
           test -f src/worker.js
           test -f public/index.html
+          test -f public/v36-ai-gate.js
           test -f public/standards/index.html
+          test -f public/standards/reader-pro-v36.js
           node --check src/worker.js
-          node --check public/standards/bridge.js
+          node --check public/v36-ai-gate.js
+          node --check public/v36-governance.js
+          node --check public/standards/reader-pro-v36.js
           node --check public/sw.js
+          node --check public/standards/sw.js
+          node scripts/deep-audit-v36.mjs
           node - <<'NODE'
-          const m=require('./RELEASE_MANIFEST_V35.json');
-          if(!String(m.release).includes('Kosif Native v35')) throw new Error('Not a v35 release');
-          if(m.standards?.refMap!==66) throw new Error('ref-map mismatch');
-          console.log(m.release, 'refs=', m.standards.refMap, 'index=', m.standards.packagedIndexRows);
+          const m=require('./RELEASE_MANIFEST_V36_1.json');
+          if(!String(m.release).includes('v36.1')) throw new Error('Not a v36.1 release');
+          if(m.aiGate?.mode!=='owner-password + per-provider tested-key verification') throw new Error('AI gate manifest mismatch');
+          console.log(m.release, m.aiGate.mode);
           NODE
 
-      - name: Deploy Kosif Native v35 to live Worker
+      - name: Deploy Kosif v36.1 to live Worker
         working-directory: kosif
         run: npx --yes wrangler@4 deploy --name mahmoud-eldesouky
 
@@ -67,23 +73,29 @@ jobs:
         run: |
           set -euo pipefail
           ok=0
-          for attempt in $(seq 1 12); do
+          for attempt in $(seq 1 15); do
             cb="${GITHUB_RUN_ID}-${attempt}-$(date +%s)"
             code=$(curl -LfsS --max-redirs 5 -H 'Cache-Control: no-cache, no-store' "$LIVE_URL/__health?cb=$cb" -o /tmp/health.json -w '%{http_code}' || true)
             echo "attempt=$attempt http=$code body=$(cat /tmp/health.json 2>/dev/null || true)"
-            if [ "$code" = 200 ] && grep -q '"version":"v35"' /tmp/health.json && grep -q '"release":"A1990"' /tmp/health.json; then ok=1; break; fi
+            if [ "$code" = 200 ] && grep -q '"version":"v36.1"' /tmp/health.json && grep -q '"aiGate":"owner-password+verified-key"' /tmp/health.json; then ok=1; break; fi
             sleep 4
           done
-          [ "$ok" -eq 1 ] || { echo '::error::Live Worker did not report Kosif Native v35.'; exit 1; }
+          [ "$ok" -eq 1 ] || { echo '::error::Live Worker did not report Kosif v36.1.'; exit 1; }
 
           cb="${GITHUB_RUN_ID}-final-$(date +%s)"
           curl -LfsS -D /tmp/headers.txt -H 'Cache-Control: no-cache, no-store' "$LIVE_URL/?cb=$cb" -o /tmp/index.html
           tr -d '\r' < /tmp/headers.txt | tee /tmp/headers.clean
-          grep -qi '^x-kosif-release: native-v35-a1990$' /tmp/headers.clean
-          grep -q 'kosif-bottom-nav' /tmp/index.html
-          grep -q 'المطالبات' /tmp/index.html
+          grep -qi '^x-kosif-release: native-v36-1-deep-audit$' /tmp/headers.clean
+          grep -q 'KOSIF_CLIENT_V36_1_2026_08_17' /tmp/index.html
+          ! grep -q 'AI Active ·' /tmp/index.html
+
+          locked=$(curl -sS -o /tmp/locked.json -w '%{http_code}' -X POST -H 'content-type: application/json' --data '{"provider":"gemini","model":"gemini-3.6-flash","key":"dummy","prompt":"x"}' "$LIVE_URL/api/kosif/ai")
+          echo "locked_ai_http=$locked body=$(cat /tmp/locked.json)"
+          [ "$locked" = 401 ]
+          grep -q 'AI_LOCKED' /tmp/locked.json
 
           curl -LfsS -H 'Cache-Control: no-cache, no-store' "$LIVE_URL/standards/?cb=$cb" -o /tmp/standards.html
-          curl -LfsS -H 'Cache-Control: no-cache, no-store' "$LIVE_URL/standards/data/ref-map.json?cb=$cb" -o /tmp/ref-map.json
-          node -e "const x=require('/tmp/ref-map.json'); if(x.refs.length!==66) process.exit(1); console.log('live refs',x.refs.length)"
-          echo "LIVE_KOSIF_NATIVE_V35_OK $LIVE_URL"
+          grep -q 'reader-pro-v36.js?v=36.1' /tmp/standards.html
+          curl -LfsS -H 'Cache-Control: no-cache, no-store' "$LIVE_URL/standards/data/library.json?cb=$cb" -o /tmp/library.json
+          node -e "const x=require('/tmp/library.json'); const b=x.find(v=>v.id==='b3'); if(!b||b.chapters!==34) process.exit(1); console.log('live b3 chapters',b.chapters)"
+          echo "LIVE_KOSIF_V36_1_OK $LIVE_URL"
