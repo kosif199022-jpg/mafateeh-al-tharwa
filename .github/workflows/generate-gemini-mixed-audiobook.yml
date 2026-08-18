@@ -19,6 +19,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 300
     env:
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       AUDIOBOOK_ORIGIN: https://mafateeh-al-tharwa.kosif199022.workers.dev
       AUDIOBOOK_TTS_URL: https://mafateeh-al-tharwa.kosif199022.workers.dev/api/ai/tts
     steps:
@@ -59,12 +60,18 @@ jobs:
           console.log('Modified book ready:',n,'chapters');
           NODE
 
-      - name: Confirm Gemini TTS is configured on deployed app
+      - name: Confirm a Gemini TTS credential is available
+        shell: bash
         run: |
           set -euo pipefail
+          if [ -n "${GEMINI_API_KEY:-}" ]; then
+            echo 'Using protected GitHub GEMINI_API_KEY secret.'
+            exit 0
+          fi
           status="$(curl -fsS --retry 3 --retry-delay 2 "$AUDIOBOOK_ORIGIN/api/tts")"
           echo "$status"
-          echo "$status" | grep -Eq '"enabled"\s*:\s*true' || { echo '::error::Gemini API key is not configured on the deployed app.'; exit 2; }
+          echo "$status" | grep -Eq '"enabled"\s*:\s*true' || { echo '::error::No Gemini API key is configured in GitHub Secrets or the deployed Worker.'; exit 2; }
+          echo 'Using Gemini configured in deployed Worker.'
 
       - name: Generate all 46 chapters with Charon plus Kore
         run: node scripts/generate-saved-audiobook.mjs --from 1 --to 46 --force --concurrency 1
