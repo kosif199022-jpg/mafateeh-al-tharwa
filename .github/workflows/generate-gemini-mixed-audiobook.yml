@@ -73,6 +73,9 @@ jobs:
           echo "$status" | grep -Eq '"enabled"\s*:\s*true' || { echo '::error::No Gemini API key is configured in GitHub Secrets or the deployed Worker.'; exit 2; }
           echo 'Using Gemini configured in deployed Worker.'
 
+      - name: Patch Gemini model_output audio parser
+        run: node scripts/patch-gemini-audio-parser.mjs
+
       - name: Generate all 46 chapters with Charon plus Kore
         run: node scripts/generate-saved-audiobook.mjs --from 1 --to 46 --force --concurrency 1
 
