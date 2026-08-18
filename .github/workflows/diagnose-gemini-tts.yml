@@ -1,0 +1,51 @@
+name: Diagnose Gemini TTS
+
+on:
+  push:
+    branches: [main]
+    paths: ['.gemini-tts-diagnose-trigger']
+
+permissions:
+  contents: write
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY || secrets.GEMINI }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Probe Gemini multi-speaker TTS
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${GEMINI_API_KEY:-}" || { echo 'missing secret'; exit 2; }
+          payload='{"model":"gemini-3.1-flash-tts-preview","input":"TTS the following dialogue in Arabic. Narrator: مرحبا بك. Guide: أهلا وسهلا.","response_format":{"type":"audio"},"generation_config":{"speech_config":[{"speaker":"Narrator","voice":"Charon"},{"speaker":"Guide","voice":"Kore"}]}}'
+          code=$(curl -sS --max-time 120 -o /tmp/tts.json -w '%{http_code}' \
+            -H "x-goog-api-key: ${GEMINI_API_KEY}" \
+            -H 'Content-Type: application/json' \
+            -H 'Api-Revision: 2026-05-20' \
+            --data "$payload" \
+            'https://generativelanguage.googleapis.com/v1beta/interactions' || true)
+          printf '# Gemini TTS diagnostic\n\n- HTTP: `%s`\n- checked_at: `%s`\n\n```json\n' "$code" "$(date -u +%FT%TZ)" > GEMINI_TTS_DIAGNOSTIC.md
+          node - <<'NODE' >> GEMINI_TTS_DIAGNOSTIC.md
+          const fs=require('fs');
+          let raw=''; try{raw=fs.readFileSync('/tmp/tts.json','utf8')}catch{}
+          try {
+            const j=JSON.parse(raw);
+            const out={};
+            if(j.error) out.error={code:j.error.code,status:j.error.status,message:j.error.message};
+            if(j.output_audio||j.outputAudio) out.audio=true;
+            if(Array.isArray(j.steps)) out.steps=j.steps.map(s=>s?.type).filter(Boolean);
+            console.log(JSON.stringify(out,null,2));
+          } catch { console.log(JSON.stringify({raw:raw.slice(0,1200)},null,2)); }
+          NODE
+          printf '\n```\n' >> GEMINI_TTS_DIAGNOSTIC.md
+      - name: Commit diagnostic
+        run: |
+          git config user.name 'Kosif TTS Diagnose Bot'
+          git config user.email 'actions@users.noreply.github.com'
+          git add GEMINI_TTS_DIAGNOSTIC.md
+          git commit -m 'Record Gemini TTS diagnostic' || exit 0
+          git push origin HEAD:main
