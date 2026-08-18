@@ -58,6 +58,9 @@ jobs:
       - name: Verify v35 all-modal scroll fixes
         run: node tests/scroll-v35-regression.test.mjs
 
+      - name: Verify reference UI and capabilities
+        run: node tests/reference-ui-capabilities.test.mjs
+
       - name: Validate reader JavaScript
         run: |
           node --check public/reader-tools.js
