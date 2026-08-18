@@ -12,17 +12,21 @@ jobs:
   probe:
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    env:
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
     steps:
       - uses: actions/checkout@v4
-      - name: Probe deployed TTS
+      - name: Probe Gemini configuration without exposing secrets
         shell: bash
         run: |
           set -euo pipefail
           url='https://mafateeh-al-tharwa.kosif199022.workers.dev/api/tts'
           body="$(curl -sS --max-time 20 --retry 2 "$url" || true)"
-          enabled=false
-          if echo "$body" | grep -Eq '"enabled"\s*:\s*true'; then enabled=true; fi
-          printf '# Gemini TTS probe\n\n- enabled: **%s**\n- checked_at: `%s`\n- endpoint: `%s`\n' "$enabled" "$(date -u +%FT%TZ)" "$url" > GEMINI_TTS_PROBE.md
+          deployed=false
+          github_secret=false
+          if echo "$body" | grep -Eq '"enabled"\s*:\s*true'; then deployed=true; fi
+          if [ -n "${GEMINI_API_KEY:-}" ]; then github_secret=true; fi
+          printf '# Gemini TTS probe\n\n- deployed_worker_enabled: **%s**\n- github_secret_present: **%s**\n- checked_at: `%s`\n- endpoint: `%s`\n' "$deployed" "$github_secret" "$(date -u +%FT%TZ)" "$url" > GEMINI_TTS_PROBE.md
           echo "$body" | sed -E 's/(AIza[0-9A-Za-z_-]+)/[redacted]/g' >> GEMINI_TTS_PROBE.md
       - name: Commit probe result
         run: |
