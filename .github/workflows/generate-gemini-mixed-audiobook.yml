@@ -1,0 +1,90 @@
+name: Generate Gemini Mixed Audiobook 46
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.audio-generation-trigger'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: gemini-mixed-audiobook-46
+  cancel-in-progress: false
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    env:
+      AUDIOBOOK_ORIGIN: https://mafateeh-al-tharwa.kosif199022.workers.dev
+      AUDIOBOOK_TTS_URL: https://mafateeh-al-tharwa.kosif199022.workers.dev/api/ai/tts
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22.19.0'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install audio tools
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y ffmpeg
+          ffmpeg -version | head -1
+
+      - name: Build exact modified 46-chapter reader source
+        run: |
+          node scripts/apply-v32-reader-fixes.mjs
+          node scripts/apply-v33-ios-fixes.mjs
+          node scripts/apply-modified-book.mjs
+          node scripts/apply-v34-scroll-fixes.mjs
+          node scripts/apply-v35-scroll-fixes.mjs
+          node - <<'NODE'
+          const fs=require('fs'),vm=require('vm');
+          const s=fs.readFileSync('public/reader.html','utf8');
+          const a=s.indexOf('const D = '),b=s.indexOf('const CH',a);
+          const D=vm.runInNewContext(s.slice(a,b)+'\nD',{});
+          const n=D.parts.flatMap(p=>p.chapters).length;
+          if(n!==46) throw new Error(`Expected 46 chapters, found ${n}`);
+          console.log('Modified book ready:',n,'chapters');
+          NODE
+
+      - name: Confirm Gemini TTS is configured on deployed app
+        run: |
+          set -euo pipefail
+          status="$(curl -fsS --retry 3 --retry-delay 2 "$AUDIOBOOK_ORIGIN/api/tts")"
+          echo "$status"
+          echo "$status" | grep -Eq '"enabled"\s*:\s*true' || { echo '::error::Gemini API key is not configured on the deployed app.'; exit 2; }
+
+      - name: Generate all 46 chapters with Charon plus Kore
+        run: node scripts/generate-saved-audiobook.mjs --from 1 --to 46 --force --concurrency 1
+
+      - name: Generate fresh word-follow timings for new audio
+        run: node scripts/generate-audio-timings.mjs --from 1 --to 46 --engine estimate
+
+      - name: Verify complete replacement audiobook
+        run: node scripts/verify-mixed-audiobook.mjs
+
+      - name: Commit new audiobook and remove legacy mapping
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'Kosif Audiobook Bot'
+          git config user.email 'actions@users.noreply.github.com'
+          git add -f public/audio/manifest.json public/audio/chapter-*.mp3 public/audio/timings/chapter-*.json
+          if git diff --cached --quiet; then
+            echo 'No audiobook changes to commit.'
+            exit 0
+          fi
+          git commit -m 'Replace legacy audiobook with Gemini mixed audio for modified 46-chapter book'
+          git push origin HEAD:main
