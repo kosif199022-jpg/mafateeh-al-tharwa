@@ -65,6 +65,9 @@ jobs:
       - name: Verify v35 all-modal scroll fixes
         run: node tests/scroll-v35-regression.test.mjs
 
+      - name: Verify reference UI and capabilities
+        run: node tests/reference-ui-capabilities.test.mjs
+
       - name: Validate reader JavaScript
         run: |
           node --check public/reader-tools.js
@@ -116,6 +119,9 @@ jobs:
           const tools = fs.readFileSync('/tmp/mafateeh-tools.css','utf8');
           const checks = [
             ['live version', version.version === expected],
+            ['reference gold token', reader.includes('--gold:#B4894A;')],
+            ['reference navy token', reader.includes('--navy:#1F3352;')],
+            ['reference Arabic serif stack', reader.includes("--serif:'Geeza Pro','SF Arabic',Georgia,'Times New Roman',serif;")],
             ['reader master fixes loaded', reader.includes(`reader-master-fixes.js?v=${major}`)],
             ['instant auto-scroll enabled', reader.includes("behavior:'instant'")],
             ['real scrolling element used', reader.includes('document.scrollingElement||document.documentElement')],
@@ -150,4 +156,4 @@ jobs:
             sleep 4
           done
           [ "$ok" -eq 1 ] || { echo '::error::Cloudflare assets did not converge to the same v35 deployment in time.'; exit 1; }
-          echo "Live smoke test passed for $LIVE_URL (v$expected_version, all modal/tool-sheet scrolling unified)."
+          echo "Live smoke test passed for $LIVE_URL (v$expected_version, reference design + full capabilities preserved)."
