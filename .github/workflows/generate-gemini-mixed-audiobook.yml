@@ -19,7 +19,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 300
     env:
-      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY || secrets.GEMINI }}
       AUDIOBOOK_ORIGIN: https://mafateeh-al-tharwa.kosif199022.workers.dev
       AUDIOBOOK_TTS_URL: https://mafateeh-al-tharwa.kosif199022.workers.dev/api/ai/tts
     steps:
@@ -65,7 +65,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ -n "${GEMINI_API_KEY:-}" ]; then
-            echo 'Using protected GitHub GEMINI_API_KEY secret.'
+            echo 'Using protected GitHub Gemini secret.'
             exit 0
           fi
           status="$(curl -fsS --retry 3 --retry-delay 2 "$AUDIOBOOK_ORIGIN/api/tts")"
