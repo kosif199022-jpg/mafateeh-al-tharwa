@@ -1,0 +1,33 @@
+name: Probe Gemini TTS
+
+on:
+  push:
+    branches: [main]
+    paths: ['.gemini-probe-trigger']
+
+permissions:
+  contents: write
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Probe deployed TTS
+        shell: bash
+        run: |
+          set -euo pipefail
+          url='https://mafateeh-al-tharwa.kosif199022.workers.dev/api/tts'
+          body="$(curl -sS --max-time 20 --retry 2 "$url" || true)"
+          enabled=false
+          if echo "$body" | grep -Eq '"enabled"\s*:\s*true'; then enabled=true; fi
+          printf '# Gemini TTS probe\n\n- enabled: **%s**\n- checked_at: `%s`\n- endpoint: `%s`\n' "$enabled" "$(date -u +%FT%TZ)" "$url" > GEMINI_TTS_PROBE.md
+          echo "$body" | sed -E 's/(AIza[0-9A-Za-z_-]+)/[redacted]/g' >> GEMINI_TTS_PROBE.md
+      - name: Commit probe result
+        run: |
+          git config user.name 'Kosif Probe Bot'
+          git config user.email 'actions@users.noreply.github.com'
+          git add GEMINI_TTS_PROBE.md
+          git commit -m 'Record Gemini TTS availability' || exit 0
+          git push origin HEAD:main
