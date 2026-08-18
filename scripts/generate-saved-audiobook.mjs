@@ -11,210 +11,29 @@ const BUILD_DIR = path.join(ROOT, ".audio-build");
 const PROGRESS_PATH = path.join(BUILD_DIR, "progress.json");
 const ENDPOINT = process.env.AUDIOBOOK_TTS_URL || "https://mafateeh-al-tharwa.kosif199022.workers.dev/api/ai/tts";
 const ORIGIN = process.env.AUDIOBOOK_ORIGIN || new URL(ENDPOINT).origin;
+const GEMINI_MODELS = [process.env.GEMINI_TTS_MODEL || "gemini-3.1-flash-tts-preview", process.env.GEMINI_TTS_FALLBACK_MODEL || "gemini-2.5-flash-preview-tts"];
 const MAX_CHUNK = 1750;
-const DEFAULT_CONCURRENCY = 1;
 const RATE_LIMIT_WAIT_MS = 15 * 60 * 1000 + 10_000;
-const GEMINI_QUOTA_WAIT_MS = 75_000;
+const QUOTA_WAIT_MS = 75_000;
 
-function parseArgs() {
-  const args = process.argv.slice(2);
-  const options = { from: 1, to: Number.MAX_SAFE_INTEGER, concurrency: DEFAULT_CONCURRENCY, force: false };
-  for (let i = 0; i < args.length; i += 1) {
-    const arg = args[i];
-    if (arg === "--chapter") options.from = options.to = Number(args[++i]);
-    else if (arg === "--from") options.from = Number(args[++i]);
-    else if (arg === "--to") options.to = Number(args[++i]);
-    else if (arg === "--concurrency") options.concurrency = Number(args[++i]);
-    else if (arg === "--force") options.force = true;
-    else throw new Error(`Unknown argument: ${arg}`);
-  }
-  if (!Number.isInteger(options.from) || !Number.isInteger(options.to) || options.from < 1 || options.from > options.to) {
-    throw new Error("Invalid chapter range.");
-  }
-  options.concurrency = Math.max(1, Math.min(2, Number(options.concurrency) || 1));
-  return options;
-}
-
-async function exists(file) {
-  try { await access(file, fsConstants.F_OK); return true; } catch { return false; }
-}
-
-async function loadBook() {
-  const source = await readFile(READER_PATH, "utf8");
-  const start = source.indexOf("const D = ");
-  const end = source.indexOf("const CH", start);
-  if (start < 0 || end < 0) throw new Error("Book data was not found in reader.html.");
-  const book = vm.runInNewContext(`${source.slice(start, end)}\nD`, Object.create(null), { timeout: 2_000 });
-  return book.parts.flatMap((part) => part.chapters);
-}
-
-function chapterText(chapter) {
-  return [
-    `الفصل ${chapter.no}. ${chapter.title}`,
-    chapter.key,
-    ...chapter.body.map(([, text]) => text),
-    `الفكرة المحورية. ${chapter.idea}`,
-    `التطبيق العملي. ${chapter.apply}`,
-    `أسئلة للتفكير. ${chapter.qs.join(" ")}`,
-    `تحدي سبعة أيام. ${chapter.week}`,
-  ].filter(Boolean).join("\n\n");
-}
-
-function splitSpeech(value, max = MAX_CHUNK) {
-  const text = String(value || "").replace(/\r/g, "").replace(/\n{3,}/g, "\n\n").trim();
-  if (!text) return [];
-  const units = [];
-  for (const paragraph of text.split(/\n+/).map((x) => x.trim()).filter(Boolean)) {
-    if (paragraph.length <= max) { units.push(paragraph); continue; }
-    const sentences = paragraph.match(/[^.!؟؛]+[.!؟؛]?/g) || [paragraph];
-    for (let sentence of sentences) {
-      sentence = sentence.trim();
-      while (sentence.length > max) {
-        let cut = sentence.lastIndexOf(" ", max);
-        if (cut < max * 0.55) cut = max;
-        units.push(sentence.slice(0, cut).trim());
-        sentence = sentence.slice(cut).trim();
-      }
-      if (sentence) units.push(sentence);
-    }
-  }
-  const chunks = [];
-  let current = "";
-  for (const unit of units) {
-    const next = current ? `${current}\n\n${unit}` : unit;
-    if (next.length > max && current) { chunks.push(current); current = unit; }
-    else current = next;
-  }
-  if (current) chunks.push(current);
-  return chunks;
-}
-
-function run(command, args, { input } = {}) {
-  return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { cwd: ROOT, stdio: [input === undefined ? "ignore" : "pipe", "pipe", "pipe"] });
-    const stdout = [], stderr = [];
-    child.stdout.on("data", (x) => stdout.push(x));
-    child.stderr.on("data", (x) => stderr.push(x));
-    child.on("error", reject);
-    child.on("close", (code) => code === 0
-      ? resolve(Buffer.concat(stdout).toString("utf8"))
-      : reject(new Error(`${command} exited ${code}: ${Buffer.concat(stderr).toString("utf8").slice(-900)}`)));
-    if (input !== undefined) child.stdin.end(input);
-  });
-}
-
-async function validWave(file) {
-  if (!(await exists(file))) return false;
-  const { open } = await import("node:fs/promises");
-  const handle = await open(file, "r");
-  try {
-    const header = Buffer.alloc(12);
-    const { bytesRead } = await handle.read(header, 0, 12, 0);
-    return bytesRead === 12 && header.subarray(0, 4).toString() === "RIFF" && header.subarray(8, 12).toString() === "WAVE";
-  } finally { await handle.close(); }
-}
-
-const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
-async function requestChunk(text, output, label) {
-  if (await validWave(output)) return;
-  const payload = JSON.stringify({ text, voice: "mixed", provider: "gemini" });
-  for (let attempt = 1; attempt <= 10; attempt += 1) {
-    const status = (await run("curl", [
-      "-sS", "--max-time", "125", "-o", output, "-w", "%{http_code}",
-      "-H", "Content-Type: application/json",
-      "-H", `Origin: ${ORIGIN}`,
-      "-H", `Referer: ${ORIGIN}/reader.html`,
-      "--data-binary", "@-", ENDPOINT,
-    ], { input: payload })).trim();
-    if (status === "200" && await validWave(output)) return;
-    let code = "";
-    try { code = JSON.parse(await readFile(output, "utf8")).error || ""; } catch {}
-    await rm(output, { force: true });
-    if (code === "gemini_not_configured") throw new Error("Gemini API is not configured on the deployed app.");
-    if (code === "gemini_quota") { console.log(`[gemini-quota] ${label}; retrying in 75s`); await wait(GEMINI_QUOTA_WAIT_MS); continue; }
-    if (status === "429" || code === "rate_limit") {
-      console.log(`[rate-limit] ${label}; waiting for 15-minute window`);
-      await wait(RATE_LIMIT_WAIT_MS);
-      continue;
-    }
-    if (attempt === 10) throw new Error(`${label} failed with HTTP ${status}${code ? ` (${code})` : ""}.`);
-    await wait(Math.min(45_000, 4_000 * attempt));
-  }
-}
-
-async function mapLimit(items, limit, worker) {
-  let cursor = 0;
-  async function runner() { while (cursor < items.length) { const index = cursor++; await worker(items[index], index); } }
-  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, runner));
-}
-
-async function probeDuration(file) {
-  const output = await run("ffprobe", ["-v", "error", "-show_entries", "format=duration", "-of", "default=nw=1:nk=1", file]);
-  return Math.round(Number(String(output).trim()) || 0);
-}
-
-async function loadProgress() {
-  try { return JSON.parse(await readFile(PROGRESS_PATH, "utf8")); }
-  catch { return { version: 2, voice: "mixed", speakers: { male: "Charon", female: "Kore" }, chapters: {} }; }
-}
-async function saveProgress(progress) { await mkdir(BUILD_DIR, { recursive: true }); await writeFile(PROGRESS_PATH, `${JSON.stringify(progress, null, 2)}\n`); }
-
-async function buildChapter(chapter, total, options, progress) {
-  const number = String(chapter.no).padStart(2, "0");
-  const target = path.join(AUDIO_DIR, `chapter-${number}.mp3`);
-  const done = progress.chapters[chapter.no];
-  if (!options.force && done?.voice === "mixed" && done?.bookVersion === 46 && await exists(target)) {
-    console.log(`[skip] ${number}/${total} ${chapter.title}`); return done;
-  }
-  const chunks = splitSpeech(chapterText(chapter));
-  const chapterDir = path.join(BUILD_DIR, `chapter-${number}`);
-  await mkdir(chapterDir, { recursive: true });
-  console.log(`[chapter] ${number}/${total} ${chapter.title} — ${chunks.length} chunk(s)`);
-  await mapLimit(chunks, options.concurrency, async (text, index) => {
-    const chunkFile = path.join(chapterDir, `chunk-${String(index + 1).padStart(3, "0")}.wav`);
-    await requestChunk(text, chunkFile, `chapter ${number}, chunk ${index + 1}/${chunks.length}`);
-    console.log(`[audio] ${number}/${total} chunk ${index + 1}/${chunks.length} ready`);
-  });
-  const concatList = path.join(chapterDir, "concat.txt");
-  await writeFile(concatList, `${chunks.map((_, index) => `file '${path.join(chapterDir, `chunk-${String(index + 1).padStart(3, "0")}.wav`).replaceAll("'", "'\\''")}'`).join("\n")}\n`);
-  const encoded = path.join(BUILD_DIR, `chapter-${number}.mp3`);
-  await run("ffmpeg", ["-hide_banner", "-loglevel", "error", "-y", "-f", "concat", "-safe", "0", "-i", concatList,
-    "-ac", "1", "-ar", "24000", "-c:a", "libmp3lame", "-b:a", "32k", "-id3v2_version", "3",
-    "-metadata", `title=${chapter.title}`, "-metadata", "album=مفاتيح الثروة — Gemini Mixed", "-metadata", "artist=Charon + Kore", encoded]);
-  await rename(encoded, target);
-  const info = await stat(target);
-  const result = { no: chapter.no, title: chapter.title, file: `/audio/chapter-${number}.mp3`, duration: await probeDuration(target), bytes: info.size,
-    voice: "mixed", speakers: { male: "Charon", female: "Kore" }, source: "gemini-3.1-flash-tts-preview+2.5-fallback", bookVersion: 46 };
-  progress.chapters[chapter.no] = result;
-  await saveProgress(progress);
-  await rm(chapterDir, { recursive: true, force: true });
-  console.log(`[saved] ${number}/${total} ${result.duration}s ${(result.bytes / 1_048_576).toFixed(1)}MB`);
-  return result;
-}
-
-async function main() {
-  const options = parseArgs();
-  await mkdir(AUDIO_DIR, { recursive: true }); await mkdir(BUILD_DIR, { recursive: true });
-  const chapters = await loadBook();
-  const total = chapters.length;
-  if (total !== 46) throw new Error(`Expected modified 46-chapter book, found ${total}. Apply book transformation first.`);
-  const to = Math.min(options.to, total);
-  const selected = chapters.filter((chapter) => chapter.no >= options.from && chapter.no <= to);
-  console.log(`[start] ${selected.length}/${total} chapter(s), ${selected.reduce((sum, c) => sum + splitSpeech(chapterText(c)).length, 0)} Gemini mixed-TTS request(s)`);
-  const progress = await loadProgress();
-  for (const chapter of selected) await buildChapter(chapter, total, options, progress);
-  const completed = chapters.map((chapter) => progress.chapters[chapter.no]).filter(Boolean);
-  if (completed.length === total) {
-    completed.sort((a, b) => a.no - b.no);
-    const manifest = { version: 3, bookVersion: 46, title: "مفاتيح الثروة — Gemini Mixed Audiobook", voice: "mixed",
-      speakers: { male: "Charon", female: "Kore" }, models: ["gemini-3.1-flash-tts-preview", "gemini-2.5-flash-preview-tts"],
-      generated_at: new Date().toISOString(), chapterCount: total,
-      total_duration: completed.reduce((sum, c) => sum + c.duration, 0), total_bytes: completed.reduce((sum, c) => sum + c.bytes, 0), chapters: completed };
-    await writeFile(path.join(AUDIO_DIR, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);
-    await rm(PROGRESS_PATH, { force: true });
-    console.log(`[complete] ${total} chapters · ${(manifest.total_duration / 3600).toFixed(2)}h · ${(manifest.total_bytes / 1_048_576).toFixed(1)}MB`);
-  } else console.log(`[partial] ${completed.length}/${total} chapters complete.`);
-}
-
-main().catch((error) => { console.error(error instanceof Error ? error.message : error); process.exitCode = 1; });
+function parseArgs(){const a=process.argv.slice(2),o={from:1,to:Number.MAX_SAFE_INTEGER,concurrency:1,force:false};for(let i=0;i<a.length;i++){if(a[i]==='--chapter')o.from=o.to=Number(a[++i]);else if(a[i]==='--from')o.from=Number(a[++i]);else if(a[i]==='--to')o.to=Number(a[++i]);else if(a[i]==='--concurrency')o.concurrency=Number(a[++i]);else if(a[i]==='--force')o.force=true;else throw new Error(`Unknown argument: ${a[i]}`)}if(!Number.isInteger(o.from)||!Number.isInteger(o.to)||o.from<1||o.from>o.to)throw new Error('Invalid chapter range.');o.concurrency=Math.max(1,Math.min(2,Number(o.concurrency)||1));return o}
+async function exists(f){try{await access(f,fsConstants.F_OK);return true}catch{return false}}
+async function loadBook(){const s=await readFile(READER_PATH,'utf8'),a=s.indexOf('const D = '),b=s.indexOf('const CH',a);if(a<0||b<0)throw new Error('Book data was not found in reader.html.');const D=vm.runInNewContext(`${s.slice(a,b)}\nD`,Object.create(null),{timeout:2000});return D.parts.flatMap(p=>p.chapters)}
+function chapterText(c){return [`الفصل ${c.no}. ${c.title}`,c.key,...c.body.map(([,t])=>t),`الفكرة المحورية. ${c.idea}`,`التطبيق العملي. ${c.apply}`,`أسئلة للتفكير. ${c.qs.join(' ')}`,`تحدي سبعة أيام. ${c.week}`].filter(Boolean).join('\n\n')}
+function splitSpeech(v,max=MAX_CHUNK){const t=String(v||'').replace(/\r/g,'').replace(/\n{3,}/g,'\n\n').trim();if(!t)return[];const u=[];for(const p of t.split(/\n+/).map(x=>x.trim()).filter(Boolean)){if(p.length<=max){u.push(p);continue}for(let s of(p.match(/[^.!؟؛]+[.!؟؛]?/g)||[p])){s=s.trim();while(s.length>max){let cut=s.lastIndexOf(' ',max);if(cut<max*.55)cut=max;u.push(s.slice(0,cut).trim());s=s.slice(cut).trim()}if(s)u.push(s)}}const out=[];let cur='';for(const x of u){const n=cur?`${cur}\n\n${x}`:x;if(n.length>max&&cur){out.push(cur);cur=x}else cur=n}if(cur)out.push(cur);return out}
+function run(cmd,args,{input}={}){return new Promise((resolve,reject)=>{const c=spawn(cmd,args,{cwd:ROOT,stdio:[input===undefined?'ignore':'pipe','pipe','pipe']}),o=[],e=[];c.stdout.on('data',x=>o.push(x));c.stderr.on('data',x=>e.push(x));c.on('error',reject);c.on('close',code=>code===0?resolve(Buffer.concat(o).toString('utf8')):reject(new Error(`${cmd} exited ${code}: ${Buffer.concat(e).toString('utf8').slice(-900)}`)));if(input!==undefined)c.stdin.end(input)})}
+async function validWave(f){if(!(await exists(f)))return false;const{open}=await import('node:fs/promises'),h=await open(f,'r');try{const b=Buffer.alloc(12),r=await h.read(b,0,12,0);return r.bytesRead===12&&b.subarray(0,4).toString()==='RIFF'&&b.subarray(8,12).toString()==='WAVE'}finally{await h.close()}}
+const wait=ms=>new Promise(r=>setTimeout(r,ms));
+function pcmToWave(pcm,rate=24000){const h=Buffer.alloc(44);h.write('RIFF',0);h.writeUInt32LE(36+pcm.length,4);h.write('WAVE',8);h.write('fmt ',12);h.writeUInt32LE(16,16);h.writeUInt16LE(1,20);h.writeUInt16LE(1,22);h.writeUInt32LE(rate,24);h.writeUInt32LE(rate*2,28);h.writeUInt16LE(2,32);h.writeUInt16LE(16,34);h.write('data',36);h.writeUInt32LE(pcm.length,40);return Buffer.concat([h,pcm])}
+function mixedInput(text){const ps=text.split(/\n+/).map(x=>x.trim()).filter(Boolean);const transcript=ps.map((p,i)=>`${i%2?'Guide':'Narrator'}: ${p}`).join('\n');return "Synthesize natural Modern Standard Arabic audiobook speech. Read only the content after TRANSCRIPT. Never read instructions or speaker labels. Use calm, warm, expressive delivery, clear articulation and comfortable medium pacing. Narrator and Guide alternate naturally between paragraphs.\nTRANSCRIPT:\n"+transcript}
+function extractAudio(result){if(result?.output_audio?.data)return{data:result.output_audio.data,rate:Number(result.output_audio.sample_rate||24000)};if(result?.outputAudio?.data)return{data:result.outputAudio.data,rate:Number(result.outputAudio.sampleRate||24000)};const item=result?.steps?.slice?.().reverse().flatMap(s=>s?.type==='model_output'?(s.content||[]):[]).find(x=>x?.type==='audio'&&x?.data);return item?{data:item.data,rate:24000}:null}
+async function directGeminiChunk(text,output,label){const key=process.env.GEMINI_API_KEY;if(!key)return false;const input=mixedInput(text);for(let cycle=1;cycle<=8;cycle++){let quota=false;for(const model of [...new Set(GEMINI_MODELS)]){for(let attempt=0;attempt<2;attempt++){const r=await fetch('https://generativelanguage.googleapis.com/v1beta/interactions',{method:'POST',headers:{'Content-Type':'application/json','x-goog-api-key':key,'Api-Revision':'2026-05-20'},body:JSON.stringify({model,input,response_format:{type:'audio'},generation_config:{speech_config:[{speaker:'Narrator',voice:'Charon'},{speaker:'Guide',voice:'Kore'}]}}),signal:AbortSignal.timeout(100000)}).catch(()=>null);if(!r){if(attempt===0)continue;break}if(r.status===429){quota=true;break}if(!r.ok){if(r.status>=500&&attempt===0)continue;break}const result=await r.json(),audio=extractAudio(result);if(audio?.data){await writeFile(output,pcmToWave(Buffer.from(audio.data,'base64'),Number.isFinite(audio.rate)?audio.rate:24000));if(await validWave(output))return true}if(attempt===0)continue}if(quota)break}if(quota){console.log(`[gemini-quota] ${label}; retrying in 75s`);await wait(QUOTA_WAIT_MS);continue}await wait(Math.min(30000,3000*cycle))}throw new Error(`${label} failed using direct Gemini API.`)}
+async function workerChunk(text,output,label){const payload=JSON.stringify({text,voice:'mixed',provider:'gemini'});for(let attempt=1;attempt<=10;attempt++){const status=(await run('curl',['-sS','--max-time','125','-o',output,'-w','%{http_code}','-H','Content-Type: application/json','-H',`Origin: ${ORIGIN}`,'-H',`Referer: ${ORIGIN}/reader.html`,'--data-binary','@-',ENDPOINT],{input:payload})).trim();if(status==='200'&&await validWave(output))return true;let code='';try{code=JSON.parse(await readFile(output,'utf8')).error||''}catch{}await rm(output,{force:true});if(code==='gemini_not_configured')throw new Error('Gemini API is not configured on the deployed app.');if(code==='gemini_quota'){await wait(QUOTA_WAIT_MS);continue}if(status==='429'||code==='rate_limit'){console.log(`[rate-limit] ${label}; waiting 15 minutes`);await wait(RATE_LIMIT_WAIT_MS);continue}if(attempt===10)throw new Error(`${label} failed with HTTP ${status}${code?` (${code})`:''}.`);await wait(Math.min(45000,4000*attempt))}}
+async function requestChunk(text,output,label){if(await validWave(output))return;if(process.env.GEMINI_API_KEY){await directGeminiChunk(text,output,label);return}await workerChunk(text,output,label)}
+async function mapLimit(items,limit,worker){let cursor=0;async function runner(){while(cursor<items.length){const i=cursor++;await worker(items[i],i)}}await Promise.all(Array.from({length:Math.min(limit,items.length)},runner))}
+async function probeDuration(file){const o=await run('ffprobe',['-v','error','-show_entries','format=duration','-of','default=nw=1:nk=1',file]);return Math.round(Number(String(o).trim())||0)}
+async function loadProgress(){try{return JSON.parse(await readFile(PROGRESS_PATH,'utf8'))}catch{return{version:2,voice:'mixed',speakers:{male:'Charon',female:'Kore'},chapters:{}}}}
+async function saveProgress(p){await mkdir(BUILD_DIR,{recursive:true});await writeFile(PROGRESS_PATH,`${JSON.stringify(p,null,2)}\n`)}
+async function buildChapter(c,total,opt,progress){const n=String(c.no).padStart(2,'0'),target=path.join(AUDIO_DIR,`chapter-${n}.mp3`),done=progress.chapters[c.no];if(!opt.force&&done?.voice==='mixed'&&done?.bookVersion===46&&await exists(target)){console.log(`[skip] ${n}/${total} ${c.title}`);return done}const chunks=splitSpeech(chapterText(c)),dir=path.join(BUILD_DIR,`chapter-${n}`);await mkdir(dir,{recursive:true});console.log(`[chapter] ${n}/${total} ${c.title} — ${chunks.length} chunk(s)`);await mapLimit(chunks,opt.concurrency,async(text,i)=>{const f=path.join(dir,`chunk-${String(i+1).padStart(3,'0')}.wav`);await requestChunk(text,f,`chapter ${n}, chunk ${i+1}/${chunks.length}`);console.log(`[audio] ${n}/${total} chunk ${i+1}/${chunks.length} ready`)});const list=path.join(dir,'concat.txt');await writeFile(list,`${chunks.map((_,i)=>`file '${path.join(dir,`chunk-${String(i+1).padStart(3,'0')}.wav`).replaceAll("'","'\\''")}'`).join('\n')}\n`);const encoded=path.join(BUILD_DIR,`chapter-${n}.mp3`);await run('ffmpeg',['-hide_banner','-loglevel','error','-y','-f','concat','-safe','0','-i',list,'-ac','1','-ar','24000','-c:a','libmp3lame','-b:a','32k','-id3v2_version','3','-metadata',`title=${c.title}`,'-metadata','album=مفاتيح الثروة — Gemini Mixed','-metadata','artist=Charon + Kore',encoded]);await rename(encoded,target);const info=await stat(target),result={no:c.no,title:c.title,file:`/audio/chapter-${n}.mp3`,duration:await probeDuration(target),bytes:info.size,voice:'mixed',speakers:{male:'Charon',female:'Kore'},source:'gemini-3.1-flash-tts-preview+2.5-fallback',bookVersion:46};progress.chapters[c.no]=result;await saveProgress(progress);await rm(dir,{recursive:true,force:true});console.log(`[saved] ${n}/${total} ${result.duration}s ${(result.bytes/1048576).toFixed(1)}MB`);return result}
+async function main(){const opt=parseArgs();await mkdir(AUDIO_DIR,{recursive:true});await mkdir(BUILD_DIR,{recursive:true});const chapters=await loadBook(),total=chapters.length;if(total!==46)throw new Error(`Expected modified 46-chapter book, found ${total}. Apply book transformation first.`);const selected=chapters.filter(c=>c.no>=opt.from&&c.no<=Math.min(opt.to,total));console.log(`[start] ${selected.length}/${total} chapter(s), ${selected.reduce((s,c)=>s+splitSpeech(chapterText(c)).length,0)} Gemini mixed-TTS request(s); source=${process.env.GEMINI_API_KEY?'GitHub secret':'deployed Worker'}`);const progress=await loadProgress();for(const c of selected)await buildChapter(c,total,opt,progress);const completed=chapters.map(c=>progress.chapters[c.no]).filter(Boolean);if(completed.length===total){completed.sort((a,b)=>a.no-b.no);const manifest={version:3,bookVersion:46,title:'مفاتيح الثروة — Gemini Mixed Audiobook',voice:'mixed',speakers:{male:'Charon',female:'Kore'},models:[...new Set(GEMINI_MODELS)],generated_at:new Date().toISOString(),chapterCount:total,total_duration:completed.reduce((s,c)=>s+c.duration,0),total_bytes:completed.reduce((s,c)=>s+c.bytes,0),chapters:completed};await writeFile(path.join(AUDIO_DIR,'manifest.json'),`${JSON.stringify(manifest,null,2)}\n`);await rm(PROGRESS_PATH,{force:true});console.log(`[complete] ${total} chapters · ${(manifest.total_duration/3600).toFixed(2)}h · ${(manifest.total_bytes/1048576).toFixed(1)}MB`)}else console.log(`[partial] ${completed.length}/${total} chapters complete.`)}
+main().catch(e=>{console.error(e instanceof Error?e.message:e);process.exitCode=1});
