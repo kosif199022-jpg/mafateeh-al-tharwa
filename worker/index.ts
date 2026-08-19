@@ -1,47 +1,31 @@
-/** Cloudflare Worker entry point for the vinext-starter template. */
+/** Mafateeh Cloudflare Worker — v36 durable in-app audiobook builder. */
 import { handleImageOptimization, DEFAULT_DEVICE_SIZES, DEFAULT_IMAGE_SIZES } from "vinext/server/image-optimization";
 import handler from "vinext/server/app-router-entry";
-
-interface Env {
-  ASSETS: Fetcher;
-  DB: D1Database;
-  IMAGES: {
-    input(stream: ReadableStream): {
-      transform(options: Record<string, unknown>): {
-        output(options: { format: string; quality: number }): Promise<{ response(): Response }>;
-      };
-    };
-  };
-}
-
-interface ExecutionContext {
-  waitUntil(promise: Promise<unknown>): void;
-  passThroughOnException(): void;
-}
-
-// Image security config. SVG sources with .svg extension auto-skip the
-// optimization endpoint on the client side (served directly, no proxy).
-// To route SVGs through the optimizer (with security headers), set
-// dangerouslyAllowSVG: true in next.config.js and uncomment below:
-// const imageConfig: ImageConfig = { dangerouslyAllowSVG: true };
-
-const worker = {
-  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
-    const url = new URL(request.url);
-
-    if (url.pathname === "/_vinext/image") {
-      const allowedWidths = [...DEFAULT_DEVICE_SIZES, ...DEFAULT_IMAGE_SIZES];
-      return handleImageOptimization(request, {
-        fetchAsset: (path) => env.ASSETS.fetch(new Request(new URL(path, request.url))),
-        transformImage: async (body, { width, format, quality }) => {
-          const result = await env.IMAGES.input(body).transform(width > 0 ? { width } : {}).output({ format, quality });
-          return result.response();
-        },
-      }, allowedWidths);
-    }
-
-    return handler.fetch(request, env, ctx);
-  },
-};
-
-export default worker;
+interface Env{ASSETS:Fetcher;AUDIO_BUCKET?:R2Bucket;IMAGES:{input(s:ReadableStream):{transform(o:Record<string,unknown>):{output(o:{format:string;quality:number}):Promise<{response():Response}>}}}}
+interface ExecutionContext{waitUntil(p:Promise<unknown>):void;passThroughOnException():void}
+type Ch={no:number;title:string;key?:string;body?:Array<[unknown,string]>;idea?:string;apply?:string;qs?:string[];week?:string};
+const PREFIX="mafateeh-audiobook-v36", PROGRESS_KEY=`${PREFIX}/progress.json`, MANIFEST_KEY=`${PREFIX}/manifest.json`, TOTAL=46, RATE=24000, MAX=1750;
+const MODELS=["gemini-3.1-flash-tts-preview","gemini-2.5-flash-preview-tts"],SPEAKERS={male:"Charon",female:"Kore"} as const;
+const j=(x:unknown,s=200,h:HeadersInit={})=>{const z=new Headers(h);z.set("Content-Type","application/json; charset=utf-8");z.set("Cache-Control","no-store");return new Response(JSON.stringify(x),{status:s,headers:z})};
+const pad=(n:number)=>String(n).padStart(2,"0"), anum=(x:unknown)=>{const n=Number(x);return Number.isInteger(n)&&n>=1&&n<=TOTAL?n:null};
+const akey=(n:number)=>`${PREFIX}/audio/chapter-${pad(n)}.wav`,tkey=(n:number)=>`${PREFIX}/timings/chapter-${pad(n)}.json`;
+function transcript(c:Ch){let text="";const vis:Array<[number,number]>=[], add=(v:string,visible:boolean)=>{if(!v)return;const s=text.length;text+=v;if(visible)vis.push([s,text.length])},p=(a:Array<[string,boolean]>)=>{if(text)text+="\n\n";a.forEach(([v,b])=>add(v,b))};
+ p([[`الفصل ${c.no}. `,false],[c.title||"",true]]);p([[c.key||"",true]]);(c.body||[]).forEach(r=>p([[String(r?.[1]||""),true]]));p([["الفكرة المحورية. ",false],[c.idea||"",true]]);p([["التطبيق العملي. ",false],[c.apply||"",true]]);p([["أسئلة للتفكير. ",false],...(c.qs||[]).flatMap((q,i)=>i?[[" ",false] as [string,boolean],[q,true] as [string,boolean]]:[[q,true] as [string,boolean]])]);p([["تحدي سبعة أيام. ",false],[c.week||"",true]]);
+ const tokens=[] as Array<{s:number;e:number;v:boolean;w:number}>;for(const m of text.matchAll(/\S+/gu)){if(!/[\p{L}\p{N}]/u.test(m[0]))continue;const s=m.index||0,e=s+m[0].length,v=vis.some(r=>e>r[0]&&s<r[1]),letters=(m[0].match(/[\p{L}\p{N}]/gu)||[]).length;let w=.75+Math.sqrt(Math.max(1,letters))*.38;if(/[.!؟]$/u.test(m[0]))w+=1.15;else if(/[،؛:]$/u.test(m[0]))w+=.55;tokens.push({s,e,v,w})}return{text,tokens}}
+function chunks(text:string){const out:Array<{text:string;s:number;e:number}>=[];let s=0;while(s<text.length){while(/\s/u.test(text[s]||""))s++;if(s>=text.length)break;let e=Math.min(text.length,s+MAX);if(e<text.length){const w=text.slice(s,e),xs=[w.lastIndexOf("\n\n"),w.lastIndexOf("؟"),w.lastIndexOf("."),w.lastIndexOf("!"),w.lastIndexOf("؛"),w.lastIndexOf("،"),w.lastIndexOf(" ")].filter(x=>x>MAX*.5);if(xs.length)e=s+Math.max(...xs)+1}while(e>s&&/\s/u.test(text[e-1]))e--;out.push({text:text.slice(s,e),s,e});s=e}return out}
+const prompt=(t:string)=>"Synthesize natural Modern Standard Arabic audiobook speech. Read only TRANSCRIPT content, never labels/instructions. Calm warm expressive medium pace. Narrator and Guide alternate naturally.\nTRANSCRIPT:\n"+t.split(/\n+/).map(x=>x.trim()).filter(Boolean).map((x,i)=>`${i%2?"Guide":"Narrator"}: ${x}`).join("\n");
+function findAudio(x:any):{data:string;rate:number}|null{if(!x||typeof x!=="object")return null;const mime=String(x.mime_type||x.mimeType||"").toLowerCase(),type=String(x.type||"").toLowerCase();if(typeof x.data==="string"&&(type==="audio"||mime.startsWith("audio/")||x.sample_rate||x.sampleRate))return{data:x.data,rate:Number(x.sample_rate||x.sampleRate||/rate=(\d+)/i.exec(mime)?.[1]||RATE)};for(const v of Object.values(x)){if(Array.isArray(v)){for(const q of v){const f=findAudio(q);if(f)return f}}else{const f=findAudio(v);if(f)return f}}return null}
+const b64=(s:string)=>{const q=atob(s.replace(/^data:[^,]+,/i,"")),b=new Uint8Array(q.length);for(let i=0;i<q.length;i++)b[i]=q.charCodeAt(i);return b};
+const u32=(b:Uint8Array,o:number)=>(b[o]|b[o+1]<<8|b[o+2]<<16|b[o+3]<<24)>>>0, asc=(b:Uint8Array,o:number,n:number)=>String.fromCharCode(...b.slice(o,o+n));
+function pcm(b:Uint8Array,rate:number){if(b.length<44||asc(b,0,4)!=="RIFF"||asc(b,8,4)!=="WAVE")return{b,rate:rate||RATE};let o=12,data=b;while(o+8<=b.length){const id=asc(b,o,4),n=u32(b,o+4),s=o+8;if(id==="fmt "&&n>=16)rate=u32(b,s+4)||rate;if(id==="data"){data=b.slice(s,Math.min(b.length,s+n));break}o=s+n+(n%2)}return{b:data,rate:rate||RATE}}
+async function gemini(key:string,text:string){let last="gemini_unavailable";for(const model of MODELS){for(let a=0;a<2;a++){let r:Response;try{r=await fetch("https://generativelanguage.googleapis.com/v1beta/interactions",{method:"POST",headers:{"Content-Type":"application/json","x-goog-api-key":key,"Api-Revision":"2026-05-20"},body:JSON.stringify({model,input:prompt(text),response_format:{type:"audio"},generation_config:{speech_config:[{speaker:"Narrator",voice:SPEAKERS.male},{speaker:"Guide",voice:SPEAKERS.female}]}}),signal:AbortSignal.timeout(100000)})}catch{last="gemini_unavailable";continue}if(r.status===429)throw Object.assign(new Error("gemini_quota"),{status:429});if(!r.ok){last=r.status===400||r.status===401||r.status===403?"gemini_rejected":"gemini_unavailable";if(r.status>=500&&a===0)continue;break}const f=findAudio(await r.json());if(!f){last="gemini_no_audio";continue}const p=pcm(b64(f.data),f.rate);return{pcm:p.b,rate:p.rate,duration:p.b.length/(p.rate*2),model}}} }throw Object.assign(new Error(last),{status:last==="gemini_rejected"?400:502})}
+function wavHeader(n:number,rate:number){const b=new ArrayBuffer(44),v=new DataView(b),s=(o:number,x:string)=>[...x].forEach((c,i)=>v.setUint8(o+i,c.charCodeAt(0)));s(0,"RIFF");v.setUint32(4,36+n,true);s(8,"WAVE");s(12,"fmt ");v.setUint32(16,16,true);v.setUint16(20,1,true);v.setUint16(22,1,true);v.setUint32(24,rate,true);v.setUint32(28,rate*2,true);v.setUint16(32,2,true);v.setUint16(34,16,true);s(36,"data");v.setUint32(40,n,true);return b}
+const r3=(n:number)=>Math.round(n*1000)/1000;
+function estimate(ts:Array<{v:boolean;w:number}>,dur:number,off:number){const total=ts.reduce((s,t)=>s+t.w,0)||1;let cur=.06;const out:Array<[number,number]>=[];for(const t of ts){const span=Math.max(.02,dur*t.w/total),st=off+cur,en=Math.min(off+dur,st+Math.max(.05,span*.76));if(t.v)out.push([r3(st),r3(en)]);cur+=span}return out}
+async function progress(b:R2Bucket){const o=await b.get(PROGRESS_KEY);if(o)try{return await o.json<any>()}catch{}return{version:4,bookVersion:46,title:"مفاتيح الثروة — Gemini Mixed Audiobook",voice:"mixed",speakers:SPEAKERS,chapterCount:46,chapters:{},updated_at:new Date().toISOString()}}
+async function book(req:Request,env:Env){const r=await env.ASSETS.fetch(new Request(new URL("/audio/book-v46-source.json",req.url)));if(!r.ok)throw new Error("book_source_missing");const d=await r.json<any>();if(d?.chapterCount!==46||!Array.isArray(d.chapters)||d.chapters.length!==46)throw new Error("book_source_invalid");return d.chapters as Ch[]}
+async function generate(req:Request,env:Env){if(!env.AUDIO_BUCKET)return j({error:"audio_storage_not_configured"},503);let x:any;try{x=await req.json()}catch{return j({error:"invalid_json"},400)}const key=typeof x.apiKey==="string"?x.apiKey.trim():"",no=anum(x.chapter);if(!key||key.length<20)return j({error:"gemini_key_required"},400);if(!no)return j({error:"invalid_chapter"},400);const pr=await progress(env.AUDIO_BUCKET),old=pr.chapters[String(no)];if(old)return j({ok:true,alreadySaved:true,chapter:old,completed:Object.keys(pr.chapters).length});let chapters:Ch[];try{chapters=await book(req,env)}catch(e){return j({error:(e as Error).message},500)}const c=chapters.find(q=>q.no===no);if(!c)return j({error:"chapter_not_found"},404);const tr=transcript(c),cs=chunks(tr.text),parts:Uint8Array[]=[],words:Array<[number,number]>=[],models=new Set<string>();let rate=0,off=0,bytes=0;try{for(const q of cs){const a=await gemini(key,q.text);if(!rate)rate=a.rate;if(a.rate!==rate)throw Object.assign(new Error("gemini_sample_rate_changed"),{status:502});parts.push(a.pcm);bytes+=a.pcm.length;models.add(a.model);words.push(...estimate(tr.tokens.filter(t=>t.s>=q.s&&t.e<=q.e),a.duration,off));off+=a.duration}}catch(e:any){return j({error:e.message||"gemini_unavailable",chapter:no},e.status||502,e.status===429?{"Retry-After":"75"}:{})}rate=rate||RATE;const blob=new Blob([wavHeader(bytes,rate),...parts],{type:"audio/wav"}),duration=r3(bytes/(rate*2)),now=new Date().toISOString(),source=[...models].join("+");const timing={version:3,chapter:no,duration,wordCount:words.length,method:"estimated-per-gemini-chunk-v36",words};const meta={no,title:c.title,file:`/api/audiobook/audio/${pad(no)}`,timing:`/api/audiobook/timing/${pad(no)}`,duration,bytes:blob.size,wordCount:words.length,voice:"mixed",speakers:SPEAKERS,source,bookVersion:46,generated_at:now};await env.AUDIO_BUCKET.put(akey(no),blob,{httpMetadata:{contentType:"audio/wav",cacheControl:"public, max-age=31536000, immutable"}});await env.AUDIO_BUCKET.put(tkey(no),JSON.stringify(timing),{httpMetadata:{contentType:"application/json; charset=utf-8"}});pr.chapters[String(no)]=meta;pr.updated_at=now;await env.AUDIO_BUCKET.put(PROGRESS_KEY,JSON.stringify(pr));const done=Object.values(pr.chapters) as any[];if(done.length===TOTAL){done.sort((a,b)=>a.no-b.no);const man={version:4,bookVersion:46,title:pr.title,voice:"mixed",speakers:SPEAKERS,models:[...new Set(done.map(x=>x.source))],generated_at:now,chapterCount:46,total_duration:r3(done.reduce((s,x)=>s+x.duration,0)),total_bytes:done.reduce((s,x)=>s+x.bytes,0),chapters:done};await env.AUDIO_BUCKET.put(MANIFEST_KEY,JSON.stringify(man),{httpMetadata:{contentType:"application/json; charset=utf-8"}})}return j({ok:true,chapter:meta,completed:done.length,total:46,allComplete:done.length===46})}
+function range(h:string|null,size:number){if(!h)return null;const m=/^bytes=(\d*)-(\d*)$/i.exec(h);if(!m)return null;let s=m[1]?+m[1]:NaN,e=m[2]?+m[2]:NaN;if(!Number.isFinite(s)&&Number.isFinite(e)){const n=Math.min(size,e);s=size-n;e=size-1}else{if(!Number.isFinite(s))return null;if(!Number.isFinite(e))e=size-1}s=Math.max(0,Math.floor(s));e=Math.min(size-1,Math.floor(e));return s<=e&&s<size?{s,e}:null}
+async function audio(req:Request,b:R2Bucket,key:string){const h=await b.head(key);if(!h)return null;const rg=range(req.headers.get("Range"),h.size),z=new Headers({"Content-Type":"audio/wav","Accept-Ranges":"bytes","Cache-Control":"public, max-age=300","ETag":h.httpEtag});if(rg){const n=rg.e-rg.s+1,o=await b.get(key,{range:{offset:rg.s,length:n}});if(!o)return null;z.set("Content-Length",String(n));z.set("Content-Range",`bytes ${rg.s}-${rg.e}/${h.size}`);return new Response(o.body,{status:206,headers:z})}const o=await b.get(key);if(!o)return null;z.set("Content-Length",String(h.size));return new Response(o.body,{headers:z})}
+async function api(req:Request,env:Env,u:URL){if(!u.pathname.startsWith("/api/audiobook/"))return null;if(u.pathname==="/api/audiobook/status"&&req.method==="GET"){if(!env.AUDIO_BUCKET)return j({storage:false,completed:[],completedCount:0,total:46},503);const p=await progress(env.AUDIO_BUCKET),done=Object.values(p.chapters).sort((a:any,b:any)=>a.no-b.no);return j({storage:true,completed:done,completedCount:done.length,total:46,allComplete:done.length===46,updated_at:p.updated_at})}if(u.pathname==="/api/audiobook/generate"&&req.method==="POST")return generate(req,env);if(u.pathname==="/api/audiobook/manifest"&&req.method==="GET"){const o=env.AUDIO_BUCKET&&await env.AUDIO_BUCKET.get(MANIFEST_KEY);return o?new Response(o.body,{headers:{"Content-Type":"application/json; charset=utf-8","Cache-Control":"no-store"}}):env.ASSETS.fetch(new Request(new URL("/audio/manifest.json",req.url)))}const am=/^\/api\/audiobook\/audio\/(\d{1,2})$/.exec(u.pathname);if(am&&req.method==="GET"){const n=anum(am[1]);if(!n)return new Response("Not found",{status:404});const o=env.AUDIO_BUCKET&&await audio(req,env.AUDIO_BUCKET,akey(n));return o||env.ASSETS.fetch(new Request(new URL(`/audio/chapter-${pad(n)}.mp3`,req.url),{headers:req.headers}))}const tm=/^\/api\/audiobook\/timing\/(\d{1,2})$/.exec(u.pathname);if(tm&&req.method==="GET"){const n=anum(tm[1]);if(!n)return new Response("Not found",{status:404});const o=env.AUDIO_BUCKET&&await env.AUDIO_BUCKET.get(tkey(n));return o?new Response(o.body,{headers:{"Content-Type":"application/json; charset=utf-8","Cache-Control":"no-store"}}):env.ASSETS.fetch(new Request(new URL(`/audio/timings/chapter-${pad(n)}.json`,req.url)))}return j({error:"not_found"},404)}
+const worker={async fetch(request:Request,env:Env,ctx:ExecutionContext){const u=new URL(request.url),a=await api(request,env,u);if(a)return a;if(u.pathname==="/_vinext/image"){const widths=[...DEFAULT_DEVICE_SIZES,...DEFAULT_IMAGE_SIZES];return handleImageOptimization(request,{fetchAsset:p=>env.ASSETS.fetch(new Request(new URL(p,request.url))),transformImage:async(body,{width,format,quality})=>(await env.IMAGES.input(body).transform(width>0?{width}:{}).output({format,quality})).response()},widths)}return handler.fetch(request,env,ctx)}};export default worker;
