@@ -43,10 +43,11 @@ jobs:
           sudo apt-get install -y ffmpeg
           ffmpeg -version | head -1
 
-      - name: Build exact stable v37 modified 46-chapter reader source
+      - name: Build exact stable v38 modified 46-chapter reader source
         run: |
           node scripts/apply-modified-book.mjs
           node scripts/apply-v37-stable-reader-architecture.mjs
+          node scripts/apply-v38-audio-scroll-containment.mjs
           node scripts/apply-v36-audiobook-builder.mjs
           node tests/stable-reader-v37-regression.test.mjs
           node - <<'NODE'
@@ -57,7 +58,9 @@ jobs:
           const n=D.parts.flatMap(p=>p.chapters).length;
           if(n!==46) throw new Error(`Expected 46 chapters, found ${n}`);
           if(s.includes('reader-master-fixes.js')||s.includes('reader-audio-touch-guard.js')) throw new Error('Unstable touch runtime leaked into audiobook source');
-          console.log('Stable modified book ready:',n,'chapters');
+          if(s.includes('reader-smart-suite.js')||s.includes('reader-mixer.js')||s.includes('reader-studio.js')) throw new Error('Non-stable reader module leaked into mobile audiobook source');
+          if(!s.includes('Mafateeh audio modal isolation v38')) throw new Error('v38 mobile audio isolation missing');
+          console.log('Stable v38 modified book ready:',n,'chapters');
           NODE
 
       - name: Confirm a Gemini TTS credential is available
