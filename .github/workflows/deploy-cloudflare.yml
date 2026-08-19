@@ -1,4 +1,4 @@
-name: Deploy Mafateeh Stable Reader v37 to Cloudflare
+name: Deploy Mafateeh Stable Reader v38 to Cloudflare
 
 on:
   push:
@@ -44,23 +44,22 @@ jobs:
       - name: Apply modified 46-chapter book
         run: node scripts/apply-modified-book.mjs
 
-      - name: Restore user stable native-scroll reader architecture
+      - name: Restore stable Reader v12 native-scroll base
         run: node scripts/apply-v37-stable-reader-architecture.mjs
+
+      - name: Apply isolated mobile audiobook scrolling v38
+        run: node scripts/apply-v38-audio-scroll-containment.mjs
 
       - name: Add in-app Gemini mixed audiobook and durable R2 source
         run: node scripts/apply-v36-audiobook-builder.mjs
 
-      - name: Verify stable v37 reader contract
+      - name: Verify stable v38 mobile reader contract
         run: node tests/stable-reader-v37-regression.test.mjs
 
-      - name: Validate reader JavaScript
+      - name: Validate loaded reader JavaScript
         run: |
           node --check public/reader-tools.js
           node --check public/reader-ambience.js
-          node --check public/reader-studio.js
-          node --check public/reader-formats.js
-          node --check public/reader-mixer.js
-          node --check public/reader-smart-suite.js
           node --check public/reader-audiobook-builder.js
           node --check public/piper-worker.js
 
@@ -89,34 +88,38 @@ jobs:
             curl -LfsS --max-redirs 5 --retry 2 -H 'Cache-Control: no-cache, no-store' "$LIVE_URL/api/audiobook/status?cb=$cb" -o /tmp/mafateeh-audio-status.json || return 1
 
             EXPECTED_VERSION="$expected_version" EXPECTED_MAJOR="$expected_major" node <<'NODE'
-          const fs = require('fs');
-          const expected = process.env.EXPECTED_VERSION;
-          const major = process.env.EXPECTED_MAJOR;
-          const version = JSON.parse(fs.readFileSync('/tmp/mafateeh-version.json','utf8'));
-          const reader = fs.readFileSync('/tmp/mafateeh-reader.html','utf8');
-          const sw = fs.readFileSync('/tmp/mafateeh-sw.js','utf8');
-          const manifest = fs.readFileSync('/tmp/mafateeh-manifest.webmanifest','utf8');
-          const builder = fs.readFileSync('/tmp/mafateeh-builder.js','utf8');
-          const audioStatus = JSON.parse(fs.readFileSync('/tmp/mafateeh-audio-status.json','utf8'));
-          const checks = [
-            ['live version 37', version.version === expected && expected === '37.0.0'],
-            ['stable architecture marker', reader.includes('Mafateeh stable native-scroll architecture v37')],
-            ['stable audio shade display', reader.includes('#audioShade.on{display:flex}')],
-            ['stable native audio sheet scroll', /#audioSheet\{[^}]*max-height:92dvh;overflow:auto/s.test(reader)],
-            ['no master touch runtime', !reader.includes('reader-master-fixes.js')],
-            ['no audio touch guard', !reader.includes('reader-audio-touch-guard.js')],
-            ['no experimental audio scroll CSS', !reader.includes('mkAudioSheetScrollV36')],
-            ['modified chapter 46 live', /"no"\s*:\s*46/.test(reader)],
-            ['word click playback retained', reader.includes('mediaStartFromWord') && reader.includes('data-audio-word')],
-            ['book/chapter/selection reader retained', reader.includes('data-mode="chapter"') && reader.includes('data-mode="book"') && reader.includes('data-mode="selection"')],
-            ['Gemini builder loaded', reader.includes(`reader-audiobook-builder.js?v=${major}`)],
-            ['durable audio endpoint wired', reader.includes('/api/audiobook/audio/') && reader.includes('/api/audiobook/timing/')],
-            ['Gemini Charon/Kore builder present', builder.includes('Charon') && builder.includes('Kore')],
-            ['stable PWA cache', sw.includes('mafateeh-al-tharwa-v37-stable-native')],
-            ['removed master runtime not cached', !sw.includes('reader-master-fixes.js')],
-            ['PWA start URL v37', manifest.includes('"start_url": "/reader.html?v=37"')],
-            ['R2 audio storage bound', audioStatus.storage === true],
-            ['reference design preserved', reader.includes('--gold:#B4894A;') && reader.includes('--navy:#1F3352;')],
+          const fs=require('fs');
+          const expected=process.env.EXPECTED_VERSION,major=process.env.EXPECTED_MAJOR;
+          const version=JSON.parse(fs.readFileSync('/tmp/mafateeh-version.json','utf8'));
+          const reader=fs.readFileSync('/tmp/mafateeh-reader.html','utf8');
+          const sw=fs.readFileSync('/tmp/mafateeh-sw.js','utf8');
+          const manifest=fs.readFileSync('/tmp/mafateeh-manifest.webmanifest','utf8');
+          const builder=fs.readFileSync('/tmp/mafateeh-builder.js','utf8');
+          const audioStatus=JSON.parse(fs.readFileSync('/tmp/mafateeh-audio-status.json','utf8'));
+          const checks=[
+            ['live v38',version.version===expected&&expected==='38.0.0'],
+            ['stable Reader v12 marker',reader.includes('Mafateeh stable Reader v12 architecture + isolated audio scroll v38')],
+            ['audio shade opens as flex',reader.includes('#audioShade.on{display:flex}')],
+            ['audio sheet is scroll owner',/#audioSheet\{[^}]*max-height:92dvh;[^}]*overflow-y:auto;[^}]*overscroll-behavior-y:contain;[^}]*touch-action:pan-y/s.test(reader)],
+            ['scoped iOS page lock',reader.includes('Mafateeh audio modal isolation v38')&&reader.includes("b.style.position='fixed'")],
+            ['boundary prime present',reader.includes('function mediaPrimeScrollBoundary()')],
+            ['no shade touch-action none',!/#audioShade\{[^}]*touch-action:none/s.test(reader)],
+            ['no master touch runtime',!reader.includes('reader-master-fixes.js')],
+            ['no global audio guard',!reader.includes('reader-audio-touch-guard.js')],
+            ['stable tools loaded',reader.includes(`/reader-tools.js?v=${major}`)],
+            ['stable ambience loaded',reader.includes(`/reader-ambience.js?v=${major}`)],
+            ['later modules removed',!reader.includes('reader-formats.js')&&!reader.includes('reader-studio.js')&&!reader.includes('reader-mixer.js')&&!reader.includes('reader-smart-suite.js')],
+            ['chapter 46 live',/"no"\s*:\s*46/.test(reader)],
+            ['word seek retained',reader.includes('mediaStartFromWord')&&reader.includes('data-audio-word')],
+            ['all listen modes retained',reader.includes('data-mode="chapter"')&&reader.includes('data-mode="book"')&&reader.includes('data-mode="selection"')],
+            ['Gemini builder loaded',reader.includes(`reader-audiobook-builder.js?v=${major}`)],
+            ['durable R2 URLs wired',reader.includes('/api/audiobook/audio/')&&reader.includes('/api/audiobook/timing/')],
+            ['Charon and Kore builder',builder.includes('Charon')&&builder.includes('Kore')],
+            ['v38 PWA cache',sw.includes('mafateeh-al-tharwa-v38-stable-audio')],
+            ['v38 offline fallback',sw.includes('OFFLINE_FALLBACK = "/reader.html?v=38"')],
+            ['v38 PWA start',manifest.includes('"start_url": "/reader.html?v=38"')],
+            ['R2 storage bound',audioStatus.storage===true],
+            ['reference design retained',reader.includes('--gold:#B4894A;')&&reader.includes('--navy:#1F3352;')],
           ];
           let failed=false;
           for(const [label,ok] of checks){console.log(`${ok?'PASS':'WAIT'}: ${label}`);if(!ok)failed=true;}
@@ -126,9 +129,9 @@ jobs:
 
           ok=0
           for attempt in $(seq 1 15); do
-            echo "Live stable propagation check $attempt/15..."
+            echo "Live v38 propagation check $attempt/15..."
             if check_live_assets "$attempt"; then ok=1; break; fi
             sleep 4
           done
-          [ "$ok" -eq 1 ] || { echo '::error::Cloudflare did not converge to the stable v37 reader in time.'; exit 1; }
-          echo "Live smoke test passed for $LIVE_URL — stable v37 native scrolling + 46 chapters + Gemini/R2 audio."
+          [ "$ok" -eq 1 ] || { echo '::error::Cloudflare did not converge to the stable v38 reader in time.'; exit 1; }
+          echo "Live smoke test passed — stable Reader v12 mobile scroll + 46 chapters + Gemini/R2."
