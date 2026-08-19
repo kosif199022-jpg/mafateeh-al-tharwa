@@ -61,3 +61,7 @@ console.log('Master v35 unified iPhone/tool-sheet scrolling fixes applied.');
 // v36 audiobook builder is intentionally chained here so every workflow that
 // builds the canonical v35 reader also gets the in-app Gemini/R2 audio feature.
 await import('./apply-v36-audiobook-builder.mjs');
+
+// The actual audio modal uses #audioShade/#audioSheet, not the older media aliases.
+// Apply the iPhone-specific scroller fix after the v36 builder has patched reader.html.
+await import('./apply-v36-audio-sheet-scroll-fix.mjs');
