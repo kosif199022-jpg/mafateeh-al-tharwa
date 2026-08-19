@@ -6,6 +6,14 @@ const root = process.cwd();
 const readerPath = path.join(root, 'public', 'reader.html');
 let source = await readFile(readerPath, 'utf8');
 
+let buildId = 'local-v38';
+try {
+  const meta = JSON.parse(await readFile(path.join(root, 'public', 'master-version.json'), 'utf8'));
+  if (meta?.buildId) buildId = String(meta.buildId);
+} catch {}
+buildId = buildId.replace(/[^a-zA-Z0-9._-]/g, '-').slice(0, 32) || 'local-v38';
+const builderUrl = `/reader-audiobook-builder.js?v=38&b=${buildId}`;
+
 const replacements = [
   ["fetch('/audio/manifest.json?v=3')", "fetch('/api/audiobook/manifest?v=4',{cache:'no-store'})"],
   ["const savedChapterUrl=index=>`/audio/chapter-${String(CH[index].no).padStart(2,'0')}.mp3`;", "const savedChapterUrl=index=>`/api/audiobook/audio/${String(CH[index].no).padStart(2,'0')}`;"],
@@ -18,9 +26,9 @@ for (const [from, to] of replacements) {
   source = source.replace(from, to);
 }
 
-if (!source.includes('reader-audiobook-builder.js?v=38')) {
-  source = source.replace(/<script src="\/reader-audiobook-builder\.js\?v=\d+"><\/script>\n?/g, '');
-  const tag = '<script src="/reader-audiobook-builder.js?v=38"></script>\n';
+source = source.replace(/<script src="\/reader-audiobook-builder\.js\?[^\"]+"><\/script>\n?/g, '');
+if (!source.includes(`src="${builderUrl}"`)) {
+  const tag = `<script src="${builderUrl}"></script>\n`;
   if (!source.includes('</body>')) throw new Error('reader.html has no closing body tag.');
   source = source.replace('</body>', `${tag}</body>`);
 }
@@ -54,4 +62,4 @@ const bookSourcePath = path.join(root, 'public', 'audio', 'book-v46-source.json'
 await mkdir(path.dirname(bookSourcePath), { recursive: true });
 await writeFile(bookSourcePath, `${JSON.stringify({ version: 1, bookVersion: 46, chapterCount: 46, chapters })}\n`);
 
-console.log('Applied v38 in-app audiobook builder and generated exact 46-chapter server source.');
+console.log(`Applied v38 in-app audiobook builder (${builderUrl}) and generated exact 46-chapter server source.`);
