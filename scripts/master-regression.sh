@@ -28,4 +28,12 @@ grep -q "reader-master-fixes.js?v=$major" public/reader.html || fail 'Master run
 grep -q '#smartHubDock{display:none!important}' public/reader-smart-suite.css || fail 'Smart dock is not hidden for distraction-free reading'
 grep -q '.mixer-dock{display:none!important}' public/reader-mixer.css || fail 'Mixer dock is not hidden for distraction-free reading'
 if grep -q 'rm -f public/reader-mixer' .github/workflows/deploy-cloudflare.yml; then fail 'Deployment workflow still strips advanced features'; fi
-echo "Master regression guard passed: v$version, 34 MP3s, $bytes bytes, advanced reader, AI, Piper, offline runtime and distraction-free UI present."
+
+# iPhone audio modal: the fixed shade, not the book page, must own vertical scrolling.
+node tests/audio-sheet-scroll-v36-regression.test.mjs
+grep -q 'id="mkAudioSheetScrollV36"' public/reader.html || fail 'Audio shade scroll CSS was not injected'
+grep -q 'Mafateeh audio shade hard lock v36' public/reader-master-fixes.js || fail 'Audio background hard lock is missing'
+grep -q "'#audioShade.on'" public/reader-master-fixes.js || fail 'Audio shade is not the primary overlay scroller'
+grep -q 'mafateeh-runtime-v35-audio-scroll-3' public/sw.js || fail 'Audio scroll cache bust v3 is missing'
+
+echo "Master regression guard passed: v$version, 34 MP3s, $bytes bytes, advanced reader, AI, Piper, offline runtime, distraction-free UI and iPhone audio overlay scrolling present."
