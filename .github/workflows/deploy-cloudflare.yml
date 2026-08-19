@@ -1,4 +1,4 @@
-name: Deploy Mafateeh Master to Cloudflare
+name: Deploy Mafateeh Stable Reader v37 to Cloudflare
 
 on:
   push:
@@ -41,32 +41,17 @@ jobs:
       - name: Prepare scripts
         run: chmod +x scripts/*.sh
 
-      - name: Apply Master v32 reader fixes
-        run: node scripts/apply-v32-reader-fixes.mjs
-
-      - name: Apply Master v33 iOS fixes
-        run: node scripts/apply-v33-ios-fixes.mjs
-
       - name: Apply modified 46-chapter book
         run: node scripts/apply-modified-book.mjs
 
-      - name: Apply Master v34 permanent scroll fixes
-        run: node scripts/apply-v34-scroll-fixes.mjs
+      - name: Restore user stable native-scroll reader architecture
+        run: node scripts/apply-v37-stable-reader-architecture.mjs
 
-      - name: Verify v34 base scroll fixes
-        run: node tests/scroll-v34-regression.test.mjs
+      - name: Add in-app Gemini mixed audiobook and durable R2 source
+        run: node scripts/apply-v36-audiobook-builder.mjs
 
-      - name: Apply Master v35 unified modal fixes
-        run: node scripts/apply-v35-scroll-fixes.mjs
-
-      - name: Master regression guard
-        run: scripts/master-regression.sh
-
-      - name: Verify v35 all-modal scroll fixes
-        run: node tests/scroll-v35-regression.test.mjs
-
-      - name: Verify reference UI and capabilities
-        run: node tests/reference-ui-capabilities.test.mjs
+      - name: Verify stable v37 reader contract
+        run: node tests/stable-reader-v37-regression.test.mjs
 
       - name: Validate reader JavaScript
         run: |
@@ -76,7 +61,7 @@ jobs:
           node --check public/reader-formats.js
           node --check public/reader-mixer.js
           node --check public/reader-smart-suite.js
-          node --check public/reader-master-fixes.js
+          node --check public/reader-audiobook-builder.js
           node --check public/piper-worker.js
 
       - name: Build Cloudflare Worker artifact
@@ -85,7 +70,7 @@ jobs:
       - name: Deploy Worker and static assets
         run: npx wrangler deploy --name mafateeh-al-tharwa
 
-      - name: Smoke test live deployment
+      - name: Smoke test live stable deployment
         shell: bash
         run: |
           set -euo pipefail
@@ -100,10 +85,8 @@ jobs:
             curl -LfsS --max-redirs 5 --retry 2 -H 'Cache-Control: no-cache, no-store' "$LIVE_URL/reader.html?v=$expected_major&cb=$cb" -o /tmp/mafateeh-reader.html || return 1
             curl -LfsS --max-redirs 5 --retry 2 -H 'Cache-Control: no-cache, no-store' "$LIVE_URL/sw.js?v=$expected_major&cb=$cb" -o /tmp/mafateeh-sw.js || return 1
             curl -LfsS --max-redirs 5 --retry 2 -H 'Cache-Control: no-cache, no-store' "$LIVE_URL/manifest.webmanifest?v=$expected_major&cb=$cb" -o /tmp/mafateeh-manifest.webmanifest || return 1
-            curl -LfsS --max-redirs 5 --retry 2 -H 'Cache-Control: no-cache, no-store' "$LIVE_URL/reader-smart-suite.css?v=$expected_major&cb=$cb" -o /tmp/mafateeh-smart.css || return 1
-            curl -LfsS --max-redirs 5 --retry 2 -H 'Cache-Control: no-cache, no-store' "$LIVE_URL/reader-mixer.css?v=$expected_major&cb=$cb" -o /tmp/mafateeh-mixer.css || return 1
-            curl -LfsS --max-redirs 5 --retry 2 -H 'Cache-Control: no-cache, no-store' "$LIVE_URL/reader-tools.css?v=$expected_major&cb=$cb" -o /tmp/mafateeh-tools.css || return 1
-            curl -LfsS --max-redirs 5 --retry 2 -H 'Cache-Control: no-cache, no-store' "$LIVE_URL/reader-master-fixes.js?v=$expected_major&cb=$cb" -o /tmp/mafateeh-master.js || return 1
+            curl -LfsS --max-redirs 5 --retry 2 -H 'Cache-Control: no-cache, no-store' "$LIVE_URL/reader-audiobook-builder.js?v=$expected_major&cb=$cb" -o /tmp/mafateeh-builder.js || return 1
+            curl -LfsS --max-redirs 5 --retry 2 -H 'Cache-Control: no-cache, no-store' "$LIVE_URL/api/audiobook/status?cb=$cb" -o /tmp/mafateeh-audio-status.json || return 1
 
             EXPECTED_VERSION="$expected_version" EXPECTED_MAJOR="$expected_major" node <<'NODE'
           const fs = require('fs');
@@ -111,49 +94,41 @@ jobs:
           const major = process.env.EXPECTED_MAJOR;
           const version = JSON.parse(fs.readFileSync('/tmp/mafateeh-version.json','utf8'));
           const reader = fs.readFileSync('/tmp/mafateeh-reader.html','utf8');
-          const master = fs.readFileSync('/tmp/mafateeh-master.js','utf8');
           const sw = fs.readFileSync('/tmp/mafateeh-sw.js','utf8');
           const manifest = fs.readFileSync('/tmp/mafateeh-manifest.webmanifest','utf8');
-          const smart = fs.readFileSync('/tmp/mafateeh-smart.css','utf8');
-          const mixer = fs.readFileSync('/tmp/mafateeh-mixer.css','utf8');
-          const tools = fs.readFileSync('/tmp/mafateeh-tools.css','utf8');
+          const builder = fs.readFileSync('/tmp/mafateeh-builder.js','utf8');
+          const audioStatus = JSON.parse(fs.readFileSync('/tmp/mafateeh-audio-status.json','utf8'));
           const checks = [
-            ['live version', version.version === expected],
-            ['reference gold token', reader.includes('--gold:#B4894A;')],
-            ['reference navy token', reader.includes('--navy:#1F3352;')],
-            ['reference Arabic serif stack', reader.includes("--serif:'Geeza Pro','SF Arabic',Georgia,'Times New Roman',serif;")],
-            ['reader master fixes loaded', reader.includes(`reader-master-fixes.js?v=${major}`)],
-            ['instant auto-scroll enabled', reader.includes("behavior:'instant'")],
-            ['real scrolling element used', reader.includes('document.scrollingElement||document.documentElement')],
-            ['visual viewport used', reader.includes('window.visualViewport?.height||window.innerHeight')],
+            ['live version 37', version.version === expected && expected === '37.0.0'],
+            ['stable architecture marker', reader.includes('Mafateeh stable native-scroll architecture v37')],
+            ['stable audio shade display', reader.includes('#audioShade.on{display:flex}')],
+            ['stable native audio sheet scroll', /#audioSheet\{[^}]*max-height:92dvh;overflow:auto/s.test(reader)],
+            ['no master touch runtime', !reader.includes('reader-master-fixes.js')],
+            ['no audio touch guard', !reader.includes('reader-audio-touch-guard.js')],
+            ['no experimental audio scroll CSS', !reader.includes('mkAudioSheetScrollV36')],
             ['modified chapter 46 live', /"no"\s*:\s*46/.test(reader)],
-            ['master fixes cached offline', sw.includes(`/reader-master-fixes.js?v=${major}`)],
-            ['PWA start URL versioned', manifest.includes(`"start_url": "/reader.html?v=${major}"`)],
-            ['smart floating dock hidden', smart.includes('#smartHubDock{display:none!important}')],
-            ['mixer floating dock hidden', mixer.includes('.mixer-dock{display:none!important}')],
-            ['iOS direct scroll fallback present', master.includes('Mafateeh iOS direct-scroll fallback v34')],
-            ['runtime is v35', master.includes("const VERSION='35.0.0';")],
-            ['tool sheet primary scroller', master.includes("'.tool-shade.on .tool-sheet'")),
-            ['form control swipe escape', master.includes('textarea,input,select,[contenteditable="true"]')],
-            ['tool sheet CSS fix live', tools.includes('Master v35 — unified iPhone tool-sheet scrolling')],
-            ['tool sheet vertical scrolling live', tools.includes('overflow-y:auto!important')],
-            ['root overflow lock removed', !master.includes("h.style.overflow='hidden'")],
-            ['body touch lock removed', !master.includes("b.style.touchAction='none'")],
+            ['word click playback retained', reader.includes('mediaStartFromWord') && reader.includes('data-audio-word')],
+            ['book/chapter/selection reader retained', reader.includes('data-mode="chapter"') && reader.includes('data-mode="book"') && reader.includes('data-mode="selection"')],
+            ['Gemini builder loaded', reader.includes(`reader-audiobook-builder.js?v=${major}`)],
+            ['durable audio endpoint wired', reader.includes('/api/audiobook/audio/') && reader.includes('/api/audiobook/timing/')],
+            ['Gemini Charon/Kore builder present', builder.includes('Charon') && builder.includes('Kore')],
+            ['stable PWA cache', sw.includes('mafateeh-al-tharwa-v37-stable-native')],
+            ['removed master runtime not cached', !sw.includes('reader-master-fixes.js')],
+            ['PWA start URL v37', manifest.includes('"start_url": "/reader.html?v=37"')],
+            ['R2 audio storage bound', audioStatus.storage === true],
+            ['reference design preserved', reader.includes('--gold:#B4894A;') && reader.includes('--navy:#1F3352;')],
           ];
-          let failed = false;
-          for (const [label, ok] of checks) {
-            console.log(`${ok ? 'PASS' : 'WAIT'}: ${label}`);
-            if (!ok) failed = true;
-          }
-          if (failed) process.exit(1);
+          let failed=false;
+          for(const [label,ok] of checks){console.log(`${ok?'PASS':'WAIT'}: ${label}`);if(!ok)failed=true;}
+          if(failed)process.exit(1);
           NODE
           }
 
           ok=0
-          for attempt in $(seq 1 12); do
-            echo "Live asset propagation check $attempt/12..."
+          for attempt in $(seq 1 15); do
+            echo "Live stable propagation check $attempt/15..."
             if check_live_assets "$attempt"; then ok=1; break; fi
             sleep 4
           done
-          [ "$ok" -eq 1 ] || { echo '::error::Cloudflare assets did not converge to the same v35 deployment in time.'; exit 1; }
-          echo "Live smoke test passed for $LIVE_URL (v$expected_version, reference design + full capabilities preserved)."
+          [ "$ok" -eq 1 ] || { echo '::error::Cloudflare did not converge to the stable v37 reader in time.'; exit 1; }
+          echo "Live smoke test passed for $LIVE_URL — stable v37 native scrolling + 46 chapters + Gemini/R2 audio."
