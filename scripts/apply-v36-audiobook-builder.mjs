@@ -14,18 +14,20 @@ const replacements = [
 
 for (const [from, to] of replacements) {
   if (source.includes(to)) continue;
-  if (!source.includes(from)) throw new Error(`v36 audiobook patch target not found: ${from.slice(0, 80)}`);
+  if (!source.includes(from)) throw new Error(`v37 audiobook patch target not found: ${from.slice(0, 80)}`);
   source = source.replace(from, to);
 }
 
-if (!source.includes('reader-audiobook-builder.js?v=36')) {
-  const tag = '<script src="/reader-audiobook-builder.js?v=36"></script>\n';
+if (!source.includes('reader-audiobook-builder.js?v=37')) {
+  source = source.replace(/<script src="\/reader-audiobook-builder\.js\?v=\d+"><\/script>\n?/g, '');
+  const tag = '<script src="/reader-audiobook-builder.js?v=37"></script>\n';
   if (!source.includes('</body>')) throw new Error('reader.html has no closing body tag.');
   source = source.replace('</body>', `${tag}</body>`);
 }
 
-if (!source.includes('Mafateeh in-app audiobook builder v36')) {
-  source = source.replace('</head>', '<!-- Mafateeh in-app audiobook builder v36 -->\n</head>');
+if (!source.includes('Mafateeh in-app audiobook builder v37')) {
+  source = source.replace(/<!-- Mafateeh in-app audiobook builder v\d+ -->\n?/g, '');
+  source = source.replace('</head>', '<!-- Mafateeh in-app audiobook builder v37 -->\n</head>');
 }
 
 await writeFile(readerPath, source);
@@ -52,4 +54,4 @@ const bookSourcePath = path.join(root, 'public', 'audio', 'book-v46-source.json'
 await mkdir(path.dirname(bookSourcePath), { recursive: true });
 await writeFile(bookSourcePath, `${JSON.stringify({ version: 1, bookVersion: 46, chapterCount: 46, chapters })}\n`);
 
-console.log('Applied v36 in-app audiobook builder and generated exact 46-chapter server source.');
+console.log('Applied v37 in-app audiobook builder and generated exact 46-chapter server source.');
