@@ -41,6 +41,12 @@ jobs:
       - name: Prepare scripts
         run: chmod +x scripts/*.sh
 
+      - name: Validate transformation scripts
+        run: |
+          node --check scripts/apply-v37-stable-reader-architecture.mjs
+          node --check scripts/apply-v38-audio-scroll-containment.mjs
+          node --check scripts/apply-v36-audiobook-builder.mjs
+
       - name: Apply modified 46-chapter book
         run: node scripts/apply-modified-book.mjs
 
@@ -75,21 +81,27 @@ jobs:
           set -euo pipefail
           expected_version="$(node -p "require('./public/master-version.json').version")"
           expected_major="${expected_version%%.*}"
+          expected_build="$(node -p "require('./public/master-version.json').buildId")"
+          test -n "$expected_build" || { echo '::error::Build ID is missing.'; exit 2; }
           base_cb="${GITHUB_SHA}-${GITHUB_RUN_ID}"
 
           check_live_assets() {
             local attempt="$1"
             local cb="${base_cb}-${attempt}-$(date +%s)"
+            local q="v=${expected_major}&b=${expected_build}&cb=${cb}"
             curl -LfsS --max-redirs 5 --retry 2 -H 'Cache-Control: no-cache, no-store' "$LIVE_URL/master-version.json?cb=$cb" -o /tmp/mafateeh-version.json || return 1
-            curl -LfsS --max-redirs 5 --retry 2 -H 'Cache-Control: no-cache, no-store' "$LIVE_URL/reader.html?v=$expected_major&cb=$cb" -o /tmp/mafateeh-reader.html || return 1
-            curl -LfsS --max-redirs 5 --retry 2 -H 'Cache-Control: no-cache, no-store' "$LIVE_URL/sw.js?v=$expected_major&cb=$cb" -o /tmp/mafateeh-sw.js || return 1
-            curl -LfsS --max-redirs 5 --retry 2 -H 'Cache-Control: no-cache, no-store' "$LIVE_URL/manifest.webmanifest?v=$expected_major&cb=$cb" -o /tmp/mafateeh-manifest.webmanifest || return 1
-            curl -LfsS --max-redirs 5 --retry 2 -H 'Cache-Control: no-cache, no-store' "$LIVE_URL/reader-audiobook-builder.js?v=$expected_major&cb=$cb" -o /tmp/mafateeh-builder.js || return 1
+            curl -LfsS --max-redirs 5 --retry 2 -H 'Cache-Control: no-cache, no-store' "$LIVE_URL/reader.html?$q" -o /tmp/mafateeh-reader.html || return 1
+            curl -LfsS --max-redirs 5 --retry 2 -H 'Cache-Control: no-cache, no-store' "$LIVE_URL/sw.js?$q" -o /tmp/mafateeh-sw.js || return 1
+            curl -LfsS --max-redirs 5 --retry 2 -H 'Cache-Control: no-cache, no-store' "$LIVE_URL/manifest.webmanifest?$q" -o /tmp/mafateeh-manifest.webmanifest || return 1
+            curl -LfsS --max-redirs 5 --retry 2 -H 'Cache-Control: no-cache, no-store' "$LIVE_URL/reader-audiobook-builder.js?$q" -o /tmp/mafateeh-builder.js || return 1
             curl -LfsS --max-redirs 5 --retry 2 -H 'Cache-Control: no-cache, no-store' "$LIVE_URL/api/audiobook/status?cb=$cb" -o /tmp/mafateeh-audio-status.json || return 1
 
-            EXPECTED_VERSION="$expected_version" EXPECTED_MAJOR="$expected_major" node <<'NODE'
+            EXPECTED_VERSION="$expected_version" EXPECTED_MAJOR="$expected_major" EXPECTED_BUILD="$expected_build" node <<'NODE'
           const fs=require('fs');
-          const expected=process.env.EXPECTED_VERSION,major=process.env.EXPECTED_MAJOR;
+          const expected=process.env.EXPECTED_VERSION;
+          const major=process.env.EXPECTED_MAJOR;
+          const build=process.env.EXPECTED_BUILD;
+          const q=`v=${major}&b=${build}`;
           const version=JSON.parse(fs.readFileSync('/tmp/mafateeh-version.json','utf8'));
           const reader=fs.readFileSync('/tmp/mafateeh-reader.html','utf8');
           const sw=fs.readFileSync('/tmp/mafateeh-sw.js','utf8');
@@ -97,26 +109,30 @@ jobs:
           const builder=fs.readFileSync('/tmp/mafateeh-builder.js','utf8');
           const audioStatus=JSON.parse(fs.readFileSync('/tmp/mafateeh-audio-status.json','utf8'));
           const checks=[
-            ['live v38',version.version===expected&&expected==='38.0.0'],
+            ['live v38 build',version.version===expected&&expected==='38.0.0'&&String(version.buildId)===build],
             ['stable Reader v12 marker',reader.includes('Mafateeh stable Reader v12 architecture + isolated audio scroll v38')],
             ['audio shade opens as flex',reader.includes('#audioShade.on{display:flex}')],
-            ['audio sheet is scroll owner',/#audioSheet\{[^}]*max-height:92dvh;[^}]*overflow-y:auto;[^}]*overscroll-behavior-y:contain;[^}]*touch-action:pan-y/s.test(reader)],
-            ['scoped iOS page lock',reader.includes('Mafateeh audio modal isolation v38')&&reader.includes("b.style.position='fixed'")],
+            ['audio sheet native scroll + viewport fallback',/#audioSheet\{[^}]*max-height:92vh;max-height:92dvh;[^}]*overflow-y:auto;[^}]*-webkit-overflow-scrolling:touch;[^}]*touch-action:pan-y/s.test(reader)],
+            ['install sheet native scroll + viewport fallback',/#installSheet\{[^}]*max-height:90vh;max-height:90dvh;[^}]*overflow-y:auto;[^}]*-webkit-overflow-scrolling:touch/s.test(reader)],
+            ['scoped root/body page lock',reader.includes("root.style.overflow='hidden'")&&reader.includes("b.style.position='fixed'")],
             ['boundary prime present',reader.includes('function mediaPrimeScrollBoundary()')],
+            ['sheet touchmove remains native',!reader.includes("mediaNativeSheet?.addEventListener('touchmove'")],
             ['no shade touch-action none',!/#audioShade\{[^}]*touch-action:none/s.test(reader)],
             ['no master touch runtime',!reader.includes('reader-master-fixes.js')],
             ['no global audio guard',!reader.includes('reader-audio-touch-guard.js')],
-            ['stable tools loaded',reader.includes(`/reader-tools.js?v=${major}`)],
-            ['stable ambience loaded',reader.includes(`/reader-ambience.js?v=${major}`)],
+            ['stable tools build-scoped',reader.includes(`/reader-tools.js?${q}`)],
+            ['stable ambience build-scoped',reader.includes(`/reader-ambience.js?${q}`)],
+            ['service worker build-scoped',reader.includes(`/sw.js?${q}`)],
+            ['manifest build-scoped',reader.includes(`/manifest.webmanifest?${q}`)],
             ['later modules removed',!reader.includes('reader-formats.js')&&!reader.includes('reader-studio.js')&&!reader.includes('reader-mixer.js')&&!reader.includes('reader-smart-suite.js')],
             ['chapter 46 live',/"no"\s*:\s*46/.test(reader)],
             ['word seek retained',reader.includes('mediaStartFromWord')&&reader.includes('data-audio-word')],
             ['all listen modes retained',reader.includes('data-mode="chapter"')&&reader.includes('data-mode="book"')&&reader.includes('data-mode="selection"')],
-            ['Gemini builder loaded',reader.includes(`reader-audiobook-builder.js?v=${major}`)],
+            ['Gemini builder build-scoped',reader.includes(`/reader-audiobook-builder.js?${q}`)],
             ['durable R2 URLs wired',reader.includes('/api/audiobook/audio/')&&reader.includes('/api/audiobook/timing/')],
             ['Charon and Kore builder',builder.includes('Charon')&&builder.includes('Kore')],
-            ['v38 PWA cache',sw.includes('mafateeh-al-tharwa-v38-stable-audio')],
-            ['v38 offline fallback',sw.includes('OFFLINE_FALLBACK = "/reader.html?v=38"')],
+            ['build-scoped PWA cache',sw.includes(`mafateeh-v38-${build}`)&&sw.includes(`mafateeh-runtime-v38-${build}`)],
+            ['build-scoped offline fallback',sw.includes(`OFFLINE_FALLBACK = "/reader.html?${q}"`)],
             ['v38 PWA start',manifest.includes('"start_url": "/reader.html?v=38"')],
             ['R2 storage bound',audioStatus.storage===true],
             ['reference design retained',reader.includes('--gold:#B4894A;')&&reader.includes('--navy:#1F3352;')],
@@ -128,10 +144,10 @@ jobs:
           }
 
           ok=0
-          for attempt in $(seq 1 15); do
-            echo "Live v38 propagation check $attempt/15..."
+          for attempt in $(seq 1 20); do
+            echo "Live v38 propagation check $attempt/20..."
             if check_live_assets "$attempt"; then ok=1; break; fi
             sleep 4
           done
-          [ "$ok" -eq 1 ] || { echo '::error::Cloudflare did not converge to the stable v38 reader in time.'; exit 1; }
-          echo "Live smoke test passed — stable Reader v12 mobile scroll + 46 chapters + Gemini/R2."
+          [ "$ok" -eq 1 ] || { echo '::error::Cloudflare did not converge to the stable v38 build in time.'; exit 1; }
+          echo "Live smoke test passed — stable mobile native scrolling + fresh PWA assets + 46 chapters + Gemini/R2."
